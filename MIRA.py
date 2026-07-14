@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MIRA (MIRA) v13.0 "AURORA"
-AI Assistant with OpenRouter Cloud + Ollama Local
-New Aurora design system, stable UI, no animation bugs.
+MIRA v2.0 — AI Assistant
+Premium dark UI, multi-provider AI, voice, scripts, system monitor.
 (c) CayPlay 2026
 """
 
-# === 1. IMPORTS ===
 import os, sys, json, logging, subprocess, threading, time
 import urllib.request, urllib.parse, urllib.error, webbrowser
 import shutil, psutil, platform, re, winreg, math, difflib
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List
 
 import pyttsx3
 import speech_recognition as sr
@@ -21,115 +19,57 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QTextEdit, QLineEdit, QPushButton, QLabel, QFrame,
     QSystemTrayIcon, QMenu, QDialog, QPlainTextEdit, QScrollArea,
-    QStackedWidget, QMessageBox, QToolButton, QProgressBar,
-    QListWidget, QListWidgetItem, QComboBox
+    QStackedWidget, QToolButton, QProgressBar, QListWidget, QListWidgetItem,
+    QComboBox, QSplitter,
 )
 from PyQt6.QtGui import (
-    QAction, QFont, QIcon, QColor, QPainter, QPixmap, QClipboard,
-    QRadialGradient, QPen, QBrush, QDesktopServices
+    QAction, QFont, QIcon, QColor, QPainter, QPixmap, QRadialGradient, QBrush,
+    QDesktopServices, QShortcut, QKeySequence,
 )
 from PyQt6.QtCore import (
     Qt, QThread, pyqtSignal, QTimer, QUrl, QSize,
-    QPropertyAnimation, QEasingCurve, QAbstractAnimation, pyqtProperty
 )
 
-# === LOGGING ===
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("mira.log", encoding="utf-8")
-    ]
+    handlers=[logging.StreamHandler(sys.stdout), logging.FileHandler("mira.log", encoding="utf-8")],
 )
-logger = logging.getLogger("MIRA")
+log = logging.getLogger("MIRA")
 
-
-def _excepthook(etype, value, tb):
-    import traceback
-    logger.error("".join(traceback.format_exception(etype, value, tb)))
-
-
-sys.excepthook = _excepthook
-
-# === 2. CONFIG ===
 CONFIG_PATH = Path("mira_config.json")
 
 DEFAULT_CONFIG = {
-    "openrouter": {
-        "api_key": "",
-        "base_url": "https://openrouter.ai/api/v1/chat/completions",
-        "model": "google/gemini-2.0-flash-001",
-        "max_tokens": 2048,
-        "temperature": 0.7
-    },
-    "ollama": {
-        "base_url": "http://localhost:11434",
-        "model": "qwen3:1.7b"
-    },
     "ai_provider": "openrouter",
+    "openrouter": {"api_key": "", "base_url": "https://openrouter.ai/api/v1/chat/completions", "model": "google/gemini-2.0-flash-001"},
+    "polza": {"api_key": "", "base_url": "https://api.polza.ai/v1/chat/completions", "model": "gpt-4o"},
+    "router": {"api_key": "", "base_url": "https://api.router.ai/v1/chat/completions", "model": "gpt-4o"},
+    "custom": {"api_key": "", "base_url": "", "model": ""},
+    "ollama": {"base_url": "http://localhost:11434", "model": "qwen3:1.7b"},
     "commands": [
         {"trigger": "выключи компьютер", "action": "shutdown /s /t 30", "type": "system"},
         {"trigger": "перезагрузи компьютер", "action": "shutdown /r /t 30", "type": "system"},
         {"trigger": "заблокируй компьютер", "action": "rundll32.exe user32.dll,LockWorkStation", "type": "system"},
         {"trigger": "спящий режим", "action": "rundll32.exe powrprof.dll,SetSuspendState 0,1,0", "type": "system"},
-        {"trigger": "отмени выключение", "action": "shutdown /a", "type": "system"},
-        {"trigger": "очисти корзину", "action": "powershell -Command Clear-RecycleBin -Force", "type": "system"},
-        {"trigger": "диспетчер задач", "action": "taskmgr.exe", "type": "app"},
-        {"trigger": "настройки системы", "action": "ms-settings:", "type": "app"},
-        {"trigger": "панель управления", "action": "control.exe", "type": "app"},
     ],
-    "scripts": {},
     "aliases": {
-        # === Apps (Cyrillic) ===
-        "калькулятор": "calc.exe", "блокнот": "notepad.exe",
-        "проводник": "explorer.exe", "диспетчер задач": "taskmgr.exe",
-        "реестр": "regedit.exe", "командная строка": "cmd.exe",
-        "терминал": "wt.exe", "powershell": "powershell.exe",
-        "браузер": "msedge.exe", "хром": "chrome.exe",
-        "стим": "steam.exe", "обс": "obs64.exe",
-        "дискорд": "discord.exe", "телеграм": "Telegram.exe",
-        "вк": "VK.exe", "вконтакте": "https://vk.com",
-        "визуал студио": "devenv.exe", "пайчарм": "pycharm64.exe",
-        "геометри дэш": "GeometryDash.exe",
-        "майнкрафт": "minecraft.exe",
-        "ютуб": "https://youtube.com", "гитхаб": "https://github.com",
-        "почта": "https://mail.google.com", "яндекс": "https://yandex.ru",
-        "гугл": "https://google.com",
-        # === Apps (Latin - same names) ===
-        "steam": "steam.exe", "calc": "calc.exe", "calculator": "calc.exe",
-        "notepad": "notepad.exe", "explorer": "explorer.exe",
-        "task manager": "taskmgr.exe", "taskmgr": "taskmgr.exe",
-        "regedit": "regedit.exe", "registry": "regedit.exe",
-        "cmd": "cmd.exe", "command prompt": "cmd.exe",
-        "terminal": "wt.exe", "wt": "wt.exe",
-        "powershell": "powershell.exe",
-        "browser": "msedge.exe", "edge": "msedge.exe",
-        "chrome": "chrome.exe", "google chrome": "chrome.exe",
-        "firefox": "firefox.exe", "opera": "opera.exe",
-        "obs": "obs64.exe", "obs studio": "obs64.exe",
-        "discord": "discord.exe", "telegram": "Telegram.exe",
-        "vk": "VK.exe", "vscode": "code.exe", "vs code": "code.exe",
-        "visual studio": "devenv.exe",
-        "pycharm": "pycharm64.exe", "intellij": "idea64.exe",
-        "minecraft": "minecraft.exe", "mc": "minecraft.exe",
-        "geometry dash": "GeometryDash.exe", "gd": "GeometryDash.exe",
-        "epic": "EpicGamesLauncher.exe", "epic games": "EpicGamesLauncher.exe",
-        "gog": "GOGGalaxy.exe", "origin": "Origin.exe",
-        "ubisoft": "UbisoftConnect.exe", "battle.net": "Agent.exe",
+        "калькулятор": "calc.exe", "блокнот": "notepad.exe", "проводник": "explorer.exe",
+        "диспетчер задач": "taskmgr.exe", "реестр": "regedit.exe", "командная строка": "cmd.exe",
+        "терминал": "wt.exe", "powershell": "powershell.exe", "браузер": "msedge.exe",
+        "хром": "chrome.exe", "стим": "steam.exe", "обс": "obs64.exe",
+        "дискорд": "discord.exe", "телеграм": "Telegram.exe", "вк": "VK.exe",
+        "вконтакте": "https://vk.com", "визуал студио": "code.exe", "пайчарм": "pycharm64.exe",
+        "майнкрафт": "minecraft.exe", "ютуб": "https://youtube.com", "гитхаб": "https://github.com",
+        "яндекс": "https://yandex.ru", "гугл": "https://google.com",
+        "steam": "steam.exe", "calc": "calc.exe", "notepad": "notepad.exe",
+        "explorer": "explorer.exe", "cmd": "cmd.exe", "terminal": "wt.exe",
+        "browser": "msedge.exe", "edge": "msedge.exe", "chrome": "chrome.exe",
+        "firefox": "firefox.exe", "opera": "opera.exe", "obs": "obs64.exe",
+        "discord": "discord.exe", "telegram": "Telegram.exe", "vk": "VK.exe",
+        "vscode": "code.exe", "pycharm": "pycharm64.exe", "minecraft": "minecraft.exe",
         "spotify": "Spotify.exe", "photoshop": "Photoshop.exe",
-        "word": "WINWORD.EXE", "excel": "EXCEL.EXE",
-        "powerpoint": "POWERPNT.EXE", "outlook": "OUTLOOK.EXE",
-        # === URLs ===
         "youtube": "https://youtube.com", "github": "https://github.com",
         "google": "https://google.com", "yandex": "https://yandex.ru",
-        "mail": "https://mail.google.com", "gmail": "https://mail.google.com",
-        "drive": "https://drive.google.com", "docs": "https://docs.google.com",
-        "maps": "https://maps.google.com", "translate": "https://translate.google.com",
-        "reddit": "https://reddit.com", "twitter": "https://twitter.com",
-        "x": "https://x.com", "tiktok": "https://tiktok.com",
-        "twitch": "https://twitch.tv", "discord web": "https://discord.com/app",
-        "spotify web": "https://open.spotify.com",
     },
     "search_engines": {
         "google": "https://www.google.com/search?q=",
@@ -138,24 +78,11 @@ DEFAULT_CONFIG = {
         "youtube": "https://www.youtube.com/results?search_query=",
     },
     "default_search": "yandex",
-    "unrestricted": {
-        "search_paths": [
-            "C:\\Program Files\\", "C:\\Program Files (x86)\\",
-            "C:\\Users\\{}\\AppData\\Local\\Programs\\",
-            "C:\\Users\\{}\\AppData\\Roaming\\",
-        ],
-        "game_launchers": [
-            "C:\\Program Files\\Epic Games\\",
-            "C:\\Program Files (x86)\\GOG Galaxy\\",
-            "C:\\Program Files\\Origin Games\\",
-            "C:\\Program Files (x86)\\Ubisoft\\",
-            "C:\\Program Files\\Battle.net\\",
-            "C:\\Program Files (x86)\\Steam\\steamapps\\common\\",
-        ]
-    },
-    "voice": {"language": "ru-RU", "speed": 160},
+    "voice": {"language": "ru-RU", "speed": 150},
     "contacts": {"telegram": "@CayPlay78", "vk": "https://m.vk.com/cayplay"},
     "notes": [],
+    "scripts": {},
+    "hotkey": "ctrl+shift+m",
 }
 
 
@@ -167,7 +94,6 @@ def load_config() -> Dict:
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             cfg = json.load(f)
-        # Merge new defaults
         for k, v in DEFAULT_CONFIG.items():
             if k not in cfg:
                 cfg[k] = v
@@ -175,13 +101,11 @@ def load_config() -> Dict:
                 for sk, sv in v.items():
                     if sk not in cfg[k]:
                         cfg[k][sk] = sv
-        # Force update aliases with latest version
-        cfg["aliases"] = DEFAULT_CONFIG["aliases"]
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=4, ensure_ascii=False)
         return cfg
     except Exception as e:
-        logger.error(f"Config: {e}")
+        log.error(f"Config: {e}")
         return json.loads(json.dumps(DEFAULT_CONFIG))
 
 
@@ -190,381 +114,261 @@ def save_config(cfg):
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=4, ensure_ascii=False)
     except Exception as e:
-        logger.error(f"Save config: {e}")
-
-# === 3. THEME ===
+        log.error(f"Save config: {e}")
 
 
-class Theme:
-    ACCENT = "#6366f1"
-    ACCENT_LIGHT = "#818cf8"
-    ACCENT_DARK = "#4f46e5"
-    BG = "#0a0a18"
-    SURFACE = "#12122a"
-    CARD = "#1a1a35"
-    CARD_HOVER = "#22224a"
-    INPUT = "#14142c"
-    BORDER = "#2a2a50"
-    BORDER_FOCUS = "#6366f1"
-    TEXT = "#e8e8f0"
-    TEXT_DIM = "#9494b8"
-    TEXT_MUTED = "#5a5a7a"
-    SUCCESS = "#22c55e"
-    ERROR = "#ef4444"
-    WARNING = "#f59e0b"
-    INFO = "#3b82f6"
-
-# === 4. UI COMPONENTS ===
+# ══════════════════════════════════════════════════════════════
+# THEME
+# ══════════════════════════════════════════════════════════════
 
 
-class GlassCard(QFrame):
+class T:
+    A  = "#6c5ce7"
+    AH = "#a29bfe"
+    AD = "#5a4bd1"
+    BG = "#0e0e18"
+    SF = "#151520"
+    CD = "#1e1e30"
+    CH = "#282845"
+    IN = "#12121c"
+    BD = "#2a2a42"
+    BF = "#6c5ce7"
+    TX = "#eeeef2"
+    TD = "#9595b0"
+    TM = "#5e5e7a"
+    OK = "#00d2a0"
+    ER = "#ff6b81"
+    WR = "#ffc048"
+    IF = "#74b9ff"
+
+
+# ══════════════════════════════════════════════════════════════
+# UI WIDGETS
+# ══════════════════════════════════════════════════════════════
+
+
+class Card(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setObjectName("glassCard")
-        self.setStyleSheet(f"""
-            QFrame#glassCard {{
-                background: {Theme.CARD};
-                border: 1px solid {Theme.BORDER};
-                border-radius: 14px;
-            }}
-        """)
+        self.setObjectName("card")
+        self.setStyleSheet(f"#card{{background:{T.CD};border:1px solid {T.BD};border-radius:12px;}}")
 
-    def setHoverMode(self, enabled=True):
-        if enabled:
-            self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-    def enterEvent(self, event):
+    def enterEvent(self, e):
         if self.cursor().shape() == Qt.CursorShape.PointingHandCursor:
-            self.setStyleSheet(f"""
-                QFrame#glassCard {{
-                    background: {Theme.CARD_HOVER};
-                    border: 1px solid {Theme.ACCENT}50;
-                    border-radius: 14px;
-                }}
-            """)
+            self.setStyleSheet(f"#card{{background:{T.CH};border:1px solid {T.A}40;border-radius:12px;}}")
 
-    def leaveEvent(self, event):
-        self.setStyleSheet(f"""
-            QFrame#glassCard {{
-                background: {Theme.CARD};
-                border: 1px solid {Theme.BORDER};
-                border-radius: 14px;
-            }}
-        """)
+    def leaveEvent(self, e):
+        self.setStyleSheet(f"#card{{background:{T.CD};border:1px solid {T.BD};border-radius:12px;}}")
 
 
-class GlowButton(QPushButton):
-    def __init__(self, text="", parent=None, accent=False):
+class Btn(QPushButton):
+    def __init__(self, text="", accent=False, parent=None):
         super().__init__(text, parent)
         self.accent = accent
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._apply_style()
-
-    def _apply_style(self):
-        base = "QPushButton{border:none;border-radius:10px;padding:10px 18px;font-family:'Segoe UI';font-size:13px;font-weight:500;}"
-        if self.accent:
-            self.setStyleSheet(base + f"QPushButton{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {Theme.ACCENT_DARK},stop:1 {Theme.ACCENT});color:white;}}QPushButton:hover{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {Theme.ACCENT},stop:1 {Theme.ACCENT_LIGHT});}}QPushButton:pressed{{background:{Theme.ACCENT_DARK};padding-top:11px;padding-bottom:9px;}}")
+        self.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
+        if accent:
+            self.setStyleSheet(f"QPushButton{{background:{T.A};color:white;border:none;border-radius:10px;padding:10px 22px;}}QPushButton:hover{{background:{T.AH};}}QPushButton:pressed{{background:{T.AD};}}")
         else:
-            self.setStyleSheet(base + f"QPushButton{{background:{Theme.CARD_HOVER};color:{Theme.TEXT};}}QPushButton:hover{{background:#2a2a4e;}}QPushButton:pressed{{background:{Theme.CARD};}}")
+            self.setStyleSheet(f"QPushButton{{background:{T.CH};color:{T.TX};border:1px solid {T.BD};border-radius:10px;padding:10px 22px;}}QPushButton:hover{{background:{T.BD};}}QPushButton:pressed{{background:{T.CD};}}")
 
 
-class FluentInput(QLineEdit):
-    def __init__(self, placeholder="", parent=None):
+class Dot(QPushButton):
+    def __init__(self, color, parent=None):
         super().__init__(parent)
-        self.setPlaceholderText(placeholder)
-        self.setStyleSheet(f"""
-            QLineEdit {{
-                background: {Theme.INPUT};
-                border: 2px solid {Theme.BORDER};
-                border-radius: 12px;
-                padding: 12px 16px;
-                color: {Theme.TEXT};
-                font-family: 'Segoe UI';
-                font-size: 15px;
-                selection-background-color: {Theme.ACCENT};
-            }}
-            QLineEdit:focus {{ border-color: {Theme.BORDER_FOCUS}; background: {Theme.CARD}; }}
-        """)
+        self.setFixedSize(38, 30)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._color = color
+        self.setStyleSheet(f"QPushButton{{background:transparent;color:{color};border:none;font-size:16px;border-radius:8px;}}QPushButton:hover{{background:{T.CH};}}")
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        c = QColor(self._color)
+        if self.underMouse():
+            c = QColor(T.CH)
+        p.setBrush(c)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(0, 0, self.width(), self.height(), 8, 8)
+        p.setPen(QColor("white") if self._color != T.CH else QColor(T.TX))
+        p.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.text())
 
 
-class PulseIndicator(QWidget):
-    def __init__(self, size=14, color=None, parent=None):
+class Pulse(QWidget):
+    def __init__(self, size=12, color=None, parent=None):
         super().__init__(parent)
-        self.setFixedSize(size * 3, size)
-        self._phase = 0
-        self._color = QColor(color or Theme.SUCCESS)
-        self._active = False
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._tick)
-        self._timer.start(80)
+        self._s = size
+        self.setFixedSize(size * 2, size)
+        self._ph = 0
+        self._c = QColor(color or T.OK)
+        self._on = False
+        t = QTimer(self)
+        t.timeout.connect(self._tick)
+        t.start(80)
 
-    def set_active(self, active):
-        self._active = active
+    def set_on(self, v):
+        self._on = v
         self.update()
 
     def _tick(self):
-        if self._active:
-            self._phase = (self._phase + 0.25) % (2 * math.pi)
+        if self._on:
+            self._ph = (self._ph + 0.3) % (2 * math.pi)
             self.update()
 
-    def paintEvent(self, event):
-        if not self._active:
+    def paintEvent(self, e):
+        if not self._on:
             return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, h = self.width(), self.height()
-        for i in range(3):
-            x = w // 2 - 21 + i * 14
-            amp = math.sin(self._phase + i) * 0.5 + 0.5
-            r = int(amp * 6) + 3
-            c = QColor(self._color)
-            c.setAlpha(int(150 + amp * 100))
-            painter.setBrush(c)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(x, h // 2 - r // 2, r, r)
-
-# === 5. NLP ===
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        a = math.sin(self._ph) * 0.5 + 0.5
+        r = int(a * (self._s // 2)) + 2
+        c = QColor(self._c)
+        c.setAlpha(int(150 + a * 100))
+        p.setBrush(c)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(self.width() // 2 - r, self.height() // 2 - r, r * 2, r * 2)
 
 
-SYNONYMS = {
-    "open": ["открой", "запусти", "включи", "покажи", "открыть", "запустить", "включить"],
-    "search": ["найди", "поищи", "погугли", "яндекси", "загугли"],
-    "greet": ["привет", "здравствуй", "добрый день", "хай", "хей"],
-    "bye": ["пока", "до свидания", "прощай"],
-    "thanks": ["спасибо", "благодарю"],
-}
+# ══════════════════════════════════════════════════════════════
+# NLP
+# ══════════════════════════════════════════════════════════════
 
-STOP_WORDS = {
-    "пожалуйста", "будь", "добр", "мне", "тебе", "очень", "просто",
-    "сейчас", "только", "именно", "же", "то", "ли", "а", "и", "но",
-}
-
-INTENT_PATTERNS = {
-    "search_web": [
-        r"(найди|поищи|погугли|яндекси|загугли)\s+(.+)",
-        r"что\s+такое\s+(.+)",
-        r"кто\s+такой\s+(.+)",
-    ],
-    "create_script": [r"создай\s+сценарий\s*[:\-]?\s*(.+)"],
-    "run_script": [r"запусти\s+сценарий\s*[:\-]?\s*(.+)"],
-    "list_scripts": [r"(покажи|список)\s+сценари"],
-    "calc": [r"сколько\s+будет\s+(.+)", r"посчитай\s+(.+)", r"вычисли\s+(.+)"],
-    "time_query": [r"(сколько\s+времени|который\s+час|время)"],
-    "date_query": [r"(какое\s+сегодня|дата|число)"],
-    "note_save": [r"(запомни|запиши|сохрани\s+заметку)\s+(.+)"],
-    "note_list": [r"(покажи\s+заметки|список\s+заметок|мои\s+заметки)"],
-}
+STOP = {"пожалуйста", "будь", "добр", "мне", "тебе", "очень", "просто", "сейчас", "только", "же", "то", "ли", "а", "и", "но"}
+VERBS_OPEN = ["открой", "запусти", "включи", "покажи", "открыть", "запустить"]
+VERBS_SEARCH = ["найди", "поищи", "погугли", "загугли"]
+VERBS_GREET = ["привет", "здравствуй", "добрый день", "хай"]
+VERBS_BYE = ["пока", "до свидания", "прощай"]
+VERBS_THANKS = ["спасибо", "благодарю"]
 
 
-class IntentClassifier:
-    def __init__(self, config):
-        self.commands = config.get("commands", [])
-        self.aliases = {k.lower(): v for k, v in config.get("aliases", {}).items()}
-        # Build reverse alias map: exe_name -> alias_key for fast lookup
-        self._exe_to_alias = {}
-        for k, v in self.aliases.items():
-            exe = v.lower().replace(".exe", "").replace(".bat", "").replace(".cmd", "")
-            self._exe_to_alias[exe] = k
+class NLP:
+    def __init__(self, cfg):
+        self.cmds = cfg.get("commands", [])
+        self.aliases = {k.lower(): v for k, v in cfg.get("aliases", {}).items()}
 
-    def _normalize(self, text):
-        return " ".join(w for w in text.lower().strip(".,!?;:- \"'").split() if w not in STOP_WORDS)
+    def _norm(self, t):
+        return " ".join(w for w in t.lower().strip(".,!?;:- \"'").split() if w not in STOP)
 
-    def _fuzzy(self, target, candidates, threshold=0.7):
-        best, best_r = None, 0.0
-        target_l = target.lower()
-        for c in candidates:
-            c_l = c.lower()
-            # Exact match
-            if target_l == c_l:
+    def _fuzzy(self, target, cands, th=0.7):
+        best, br = None, 0.0
+        tl = target.lower()
+        for c in cands:
+            cl = c.lower()
+            if tl == cl:
                 return c
-            # Substring match
-            if target_l in c_l or c_l in target_l:
-                ratio = 0.9
-                if ratio > best_r:
-                    best, best_r = c, ratio
-                continue
-            r = difflib.SequenceMatcher(None, target_l, c_l).ratio()
-            if r > best_r and r >= threshold:
-                best, best_r = c, r
+            if tl in cl or cl in tl:
+                return c
+            r = difflib.SequenceMatcher(None, tl, cl).ratio()
+            if r > br and r >= th:
+                best, br = c, r
         return best
 
-    def _extract_target(self, text):
-        """Extract app name from text after removing verbs and prepositions."""
-        # Remove verbs
-        for verb in SYNONYMS["open"] + SYNONYMS["search"]:
-            text = re.sub(rf"\b{verb}\b", "", text, flags=re.IGNORECASE)
-        # Remove prepositions
-        text = re.sub(r"\b(в|на|из|по|для|с|к|о|у)\b", "", text, flags=re.IGNORECASE)
-        # Remove browser/internet filler phrases
-        text = re.sub(r"\b(в\s+браузере|в\s+интернете|онлайн|в\s+гугле|в\s+яндексе|в\s+поиске)\b", "", text, flags=re.IGNORECASE)
+    def _extract(self, text):
+        for v in VERBS_OPEN + VERBS_SEARCH:
+            text = re.sub(rf"\b{v}\b", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\b(в|на|из|по|для|с|к|о|у|в\s+браузере|в\s+интернете|онлайн)\b", "", text, flags=re.IGNORECASE)
         return " ".join(text.split()).strip()
 
     def classify(self, text):
-        original = text.lower().strip()
-        clean = self._normalize(text)
+        orig = text.lower().strip()
+        clean = self._norm(text)
 
-        # 1. Patterns (scripts, calc, time, etc.)
-        for intent, patterns in INTENT_PATTERNS.items():
-            for pat in patterns:
-                m = re.search(pat, original)
-                if m:
-                    return intent, {"match": m.group(1).strip() if m.groups() else "", "full": original}
+        m = re.search(r"(https?://\S+)", orig)
+        if m:
+            return "open_url", {"url": m.group(1)}
 
-        # 2. System commands
-        for cmd in self.commands:
-            if cmd.get("trigger", "") and cmd["trigger"] in original:
+        for cmd in self.cmds:
+            if cmd.get("trigger") and cmd["trigger"] in orig:
                 return "system_cmd", {"action": cmd["action"], "type": cmd.get("type", "app"), "trigger": cmd["trigger"]}
 
-        # 3. Search
-        for verb in SYNONYMS["search"]:
-            if original.startswith(verb + " ") or f" {verb} " in original:
-                q = self._extract_target(original)
+        for v in VERBS_SEARCH:
+            if orig.startswith(v + " ") or f" {v} " in orig:
+                q = self._extract(orig)
                 if q:
-                    eng = "google" if ("гугл" in original or "google" in original) else "yandex"
+                    eng = "google" if ("гугл" in orig or "google" in orig) else "yandex"
                     return "search_web", {"query": q, "engine": eng}
 
-        # 4. URL
-        url_m = re.search(r"(https?://\S+)", original)
-        if url_m:
-            return "open_url", {"url": url_m.group(1)}
+        m = re.search(r"(найди|поищи|погугли|загугли)\s+(.+)", orig)
+        if m:
+            return "search_web", {"query": m.group(2), "engine": "yandex"}
+        m = re.search(r"что\s+такое\s+(.+)", orig)
+        if m:
+            return "search_web", {"query": m.group(1), "engine": "yandex"}
+        m = re.search(r"кто\s+такой\s+(.+)", orig)
+        if m:
+            return "search_web", {"query": m.group(1), "engine": "yandex"}
 
-        # 5. Open app - check all verbs (start of sentence OR anywhere)
-        for verb in SYNONYMS["open"]:
-            # Check if verb is present
-            if verb in original:
-                target = self._extract_target(original)
-                if target:
-                    # Direct alias match (exact, case-insensitive)
-                    if target in self.aliases:
-                        return "open_app", {"target": self.aliases[target], "display": target}
-                    # Try with .exe
-                    if target + ".exe" in [v.lower() for v in self.aliases.values()]:
-                        for k, v in self.aliases.items():
-                            if v.lower() == target + ".exe":
-                                return "open_app", {"target": v, "display": k}
-                    # Fuzzy match
-                    m = self._fuzzy(target, list(self.aliases.keys()))
-                    if m:
-                        return "open_app", {"target": self.aliases[m], "display": m}
-                    # If no match, try the target directly
-                    return "open_app", {"target": target, "display": target}
+        m = re.search(r"создай\s+сценарий\s*[:\-]?\s*(.+)", orig)
+        if m:
+            return "create_script", {"match": m.group(1).strip()}
+        m = re.search(r"запусти\s+сценарий\s*[:\-]?\s*(.+)", orig)
+        if m:
+            return "run_script", {"match": m.group(1).strip()}
+        m = re.search(r"(покажи|список)\s+сценари", orig)
+        if m:
+            return "list_scripts", {}
 
-        # 6. Also check if any alias key appears directly in text (without verb)
-        for alias, exe in self.aliases.items():
-            if alias in original and len(alias) >= 3:
-                return "open_app", {"target": exe, "display": alias}
+        m = re.search(r"(сколько\s+будет|посчитай|вычисли)\s+(.+)", orig)
+        if m:
+            return "calc", {"expr": m.group(2).strip()}
+        m = re.search(r"\d+\s*[+\-*/]\s*\d+", orig)
+        if m:
+            return "calc", {"expr": m}
 
-        # 7. Time/Date
-        if any(w in original for w in ["время", "час", "который час"]):
+        if any(w in orig for w in ["время", "час", "который час"]):
             return "time_query", {}
-        if any(w in original for w in ["дата", "число", "день", "какое сегодня"]):
+        if any(w in orig for w in ["дата", "число", "какое сегодня"]):
             return "date_query", {}
 
-        # 8. Notes
-        for verb in ["запомни", "запиши"]:
-            if original.startswith(verb + " "):
-                return "note_save", {"text": original.replace(verb, "", 1).strip()}
+        m = re.search(r"(запомни|запиши)\s+(.+)", orig)
+        if m:
+            return "note_save", {"text": m.group(2).strip()}
+        if any(w in orig for w in ["заметк", "покажи заметки"]):
+            return "note_list", {}
 
-        # 9. Calculator
-        if re.search(r"\d+\s*[+\-*/]\s*\d+", original) or "посчитай" in original or "сколько будет" in original:
-            expr = re.findall(r"[\d+\-*/().\s]+", original)
-            return "calc", {"expr": expr[0].strip() if expr else ""}
+        for v in VERBS_OPEN:
+            if v in orig:
+                target = self._extract(orig)
+                if target:
+                    if target in self.aliases:
+                        return "open_app", {"target": self.aliases[target], "display": target}
+                    fuzzy = self._fuzzy(target, list(self.aliases.keys()))
+                    if fuzzy:
+                        return "open_app", {"target": self.aliases[fuzzy], "display": fuzzy}
+                    return "open_app", {"target": target, "display": target}
 
-        # 10. Chat phrases
-        if any(w in original for w in SYNONYMS["greet"]):
+        for alias, exe in self.aliases.items():
+            if alias in orig and len(alias) >= 3:
+                return "open_app", {"target": exe, "display": alias}
+
+        if any(w in orig for w in VERBS_GREET):
             return "chat", {"response": "Привет! Чем могу помочь?"}
-        if any(w in original for w in SYNONYMS["bye"]):
-            return "chat", {"response": "До свидания! Возвращайтесь."}
-        if any(w in original for w in SYNONYMS["thanks"]):
-            return "chat", {"response": "Пожалуйста! Рада помочь."}
-        if "как дела" in original:
-            return "chat", {"response": "Отлично! Готова помочь."}
-        if "что ты умеешь" in original:
-            return "chat", {"response": "Я умею:\n- Запускать приложения и игры\n- Искать в интернете\n- Отвечать на вопросы (AI)\n- Сценарии и заметки\n- Калькулятор и многое другое"}
+        if any(w in orig for w in VERBS_BYE):
+            return "chat", {"response": "До свидания!"}
+        if any(w in orig for w in VERBS_THANKS):
+            return "chat", {"response": "Пожалуйста!"}
+        if "как дела" in orig:
+            return "chat", {"response": "Отлично, готов помочь!"}
+        if "что ты умеешь" in orig:
+            return "chat", {"response": "Я умею запускать приложения, искать в интернете, отвечать на вопросы, работать со сценариями и заметками, и многое другое."}
 
-        # 11. Default: AI chat
-        return "chat", {"prompt": text}
-
-# === 6. BACKEND ===
+        return "ai_chat", {"prompt": text}
 
 
-class OmniResolver:
-    def __init__(self, config):
-        self.aliases = {k.lower(): v for k, v in config.get("aliases", DEFAULT_CONFIG["aliases"]).items()}
-        self.paths = config.get("unrestricted", {}).get("search_paths", [])
-        self.game_paths = config.get("unrestricted", {}).get("game_launchers", [])
-        self.user = os.getlogin() if hasattr(os, "getlogin") else "User"
-        self.steam_path = self._find_steam()
-        self._steam_cache = {}
-        self._steam_ready = False
-        self._reg_cache = {}
-        self._reg_ready = False
-        self._lnk_cache = {}
-        self._lnk_ready = False
+# ══════════════════════════════════════════════════════════════
+# SYSTEM EXECUTOR
+# ══════════════════════════════════════════════════════════════
+
+
+class Executor:
+    def __init__(self, cfg):
+        self.aliases = {k.lower(): v for k, v in cfg.get("aliases", DEFAULT_CONFIG["aliases"]).items()}
+        self.search = cfg.get("search_engines", DEFAULT_CONFIG["search_engines"])
+        self.default_search = cfg.get("default_search", "yandex")
+        self.steam = self._find_steam()
         self._cache = {}
-        threading.Thread(target=self._bg_init, daemon=True).start()
-
-    def _bg_init(self):
-        try:
-            self._scan_steam()
-            self._steam_ready = True
-        except Exception as e:
-            logger.error(f"Steam: {e}")
-        try:
-            self._scan_registry()
-            self._reg_ready = True
-        except Exception as e:
-            logger.error(f"Registry: {e}")
-        try:
-            self._scan_start_menu()
-            self._lnk_ready = True
-        except Exception as e:
-            logger.error(f"StartMenu: {e}")
-        logger.info(f"Resolver ready: {len(self._steam_cache)} steam, {len(self._reg_cache)} reg, {len(self._lnk_cache)} lnk")
-
-    def _fuzzy(self, target, candidates, threshold=0.7):
-        best, best_r = None, 0.0
-        for c in candidates:
-            r = difflib.SequenceMatcher(None, target.lower(), c.lower()).ratio()
-            if r > best_r and r >= threshold:
-                best, best_r = c, r
-        return best
-
-    def _resolve_exe(self, exe_name):
-        """Resolve exe name to full path. Returns full path or original name."""
-        # Already a full path
-        if os.path.isabs(exe_name) and os.path.exists(exe_name):
-            return exe_name
-        # Try shutil.which (searches PATH)
-        found = shutil.which(exe_name)
-        if found:
-            return found
-        # Try with .exe extension
-        if not exe_name.lower().endswith(".exe"):
-            found = shutil.which(exe_name + ".exe")
-            if found:
-                return found
-        # Check steam cache
-        if self._steam_ready:
-            for k, v in self._steam_cache.items():
-                if k == exe_name.lower() or k == exe_name.lower().replace(".exe", ""):
-                    if os.path.exists(v):
-                        return v
-        # Fallback: check Steam path directly if cache not ready yet
-        elif self.steam_path:
-            exe_lower = exe_name.lower().replace(".exe", "")
-            if exe_lower in ("steam", "стим"):
-                steam_exe = os.path.join(self.steam_path, "steam.exe")
-                if os.path.exists(steam_exe):
-                    return steam_exe
-        # Check registry cache
-        if self._reg_ready:
-            for k, v in self._reg_cache.items():
-                if exe_name.lower().replace(".exe", "") in k:
-                    if os.path.exists(v):
-                        return v
-        # Return as-is (will try subprocess.Popen later)
-        return exe_name
+        threading.Thread(target=self._scan_steam, daemon=True).start()
 
     def _find_steam(self):
         try:
@@ -578,34 +382,11 @@ class OmniResolver:
         return None
 
     def _scan_steam(self):
-        if not self.steam_path:
+        if not self.steam:
             return
-        # First, find steam.exe itself
-        steam_exe = os.path.join(self.steam_path, "steam.exe")
-        if os.path.exists(steam_exe):
-            self._steam_cache["steam"] = steam_exe
-            self._steam_cache["steam.exe"] = steam_exe
-            self._steam_cache["стим"] = steam_exe
-        # Also check steamservice.exe for other scenarios
-        vdf = os.path.join(self.steam_path, "steamapps", "libraryfolders.vdf")
-        libs = [os.path.join(self.steam_path, "steamapps", "common")]
-        if os.path.exists(vdf):
-            try:
-                with open(vdf, "r", encoding="utf-8", errors="ignore") as f:
-                    for line in f:
-                        if '"path"' in line:
-                            m = re.search(r'"path"\s*"([^"]+)"', line)
-                            if m:
-                                p = m.group(1).replace("\\\\", "\\")
-                                c = os.path.join(p, "steamapps", "common")
-                                if os.path.isdir(c):
-                                    libs.append(c)
-            except Exception:
-                pass
-        # Skip list - helper executables that shouldn't be launched
-        skip_exe = {"uninstall", "setup", "install", "redist", "unins",
-                     "steamwebhelper", "steamservice", "crashhandler",
-                     "streaming_client", "gameoverlayrenderer"}
+        vdf = os.path.join(self.steam_path, "steamapps", "libraryfolders.vdf") if hasattr(self, 'steam_path') else None
+        libs = [os.path.join(self.steam, "steamapps", "common")]
+        skip = {"uninstall", "setup", "install", "redist", "steamwebhelper", "steamservice"}
         for lib in libs:
             if not os.path.isdir(lib):
                 continue
@@ -614,177 +395,69 @@ class OmniResolver:
                     fp = os.path.join(lib, folder)
                     if not os.path.isdir(fp):
                         continue
-                    # Find the main game exe
-                    best_exe = None
                     for e in os.listdir(fp):
-                        el = e.lower()
-                        if not el.endswith(".exe"):
-                            continue
-                        name = el.replace(".exe", "")
-                        if any(name.startswith(s) for s in skip_exe):
-                            continue
-                        # Prefer the exe that matches the folder name
-                        if name == folder.lower():
-                            best_exe = os.path.join(fp, e)
+                        if e.lower().endswith(".exe") and e.lower().replace(".exe", "") not in skip:
+                            self._cache[folder.lower()] = os.path.join(fp, e)
                             break
-                        if not best_exe:
-                            best_exe = os.path.join(fp, e)
-                    if best_exe:
-                        self._steam_cache[folder.lower()] = best_exe
-                        exe_name = os.path.basename(best_exe).lower().replace(".exe", "")
-                        if exe_name not in skip_exe:
-                            self._steam_cache[exe_name] = best_exe
             except Exception:
                 pass
 
-    def _scan_registry(self):
-        for kp in [r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"]:
-            try:
-                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, kp) as key:
-                    for i in range(winreg.QueryInfoKey(key)[0]):
-                        try:
-                            sk = winreg.EnumKey(key, i)
-                            with winreg.OpenKey(key, sk) as sub:
-                                try:
-                                    name = winreg.QueryValueEx(sub, "DisplayName")[0].lower()
-                                    if name in self._reg_cache:
-                                        continue
-                                    for vn in ["InstallLocation", "DisplayIcon"]:
-                                        try:
-                                            val = winreg.QueryValueEx(sub, vn)[0]
-                                            if val and isinstance(val, str):
-                                                exe = val.replace('"', '').split(",")[0].strip()
-                                                if exe.lower().endswith(".exe") and os.path.exists(exe):
-                                                    self._reg_cache[name] = exe
-                                                    break
-                                                elif os.path.isdir(exe):
-                                                    try:
-                                                        for e in os.listdir(exe)[:30]:
-                                                            if e.lower().endswith(".exe"):
-                                                                self._reg_cache[name] = os.path.join(exe, e)
-                                                                break
-                                                    except Exception:
-                                                        pass
-                                        except Exception:
-                                            pass
-                                except Exception:
-                                    pass
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-
-    def _scan_start_menu(self):
-        for sp in [
-            os.path.join(os.environ.get("ProgramData", "C:\\ProgramData"), "Microsoft\\Windows\\Start Menu\\Programs"),
-            os.path.join(os.environ.get("APPDATA", ""), "Microsoft\\Windows\\Start Menu\\Programs"),
-        ]:
-            if not os.path.isdir(sp):
-                continue
-            try:
-                for entry in os.listdir(sp):
-                    full = os.path.join(sp, entry)
-                    if entry.lower().endswith(".lnk"):
-                        self._lnk_cache[entry.lower().replace(".lnk", "")] = full
-                    elif os.path.isdir(full):
-                        try:
-                            for sub in os.listdir(full):
-                                if sub.lower().endswith(".lnk"):
-                                    k = (entry + " " + sub).lower().replace(".lnk", "")
-                                    self._lnk_cache[k] = os.path.join(full, sub)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-
-    def _resolve_lnk(self, path):
-        try:
-            import pythoncom
-            from win32com.shell import shell
-            pythoncom.CoInitialize()
-            return shell.CreateShellLink(path).GetPath(0)[0]
-        except Exception:
-            return None
-
-    def resolve(self, raw_cmd):
-        if not raw_cmd:
-            return None
-        cmd = raw_cmd.lower().strip(".,!?;:- \"'")
+    def _resolve(self, cmd):
         if not cmd:
             return None
-        if cmd in self._cache:
-            return self._cache[cmd]
-        # 1. Aliases (direct match)
-        if cmd in self.aliases:
-            r = self._resolve_exe(self.aliases[cmd])
-            self._cache[cmd] = r
+        cl = cmd.lower().strip(".,!?;:- \"'")
+        if cl in self._cache:
+            return self._cache[cl]
+        if cl in self.aliases:
+            r = self._resolve_exe(self.aliases[cl])
+            self._cache[cl] = r
             return r
-        words = set(re.findall(r"\w+", cmd))
+        words = set(re.findall(r"\w+", cl))
         for alias, exe in self.aliases.items():
-            if alias in words or alias == cmd:
+            if alias in words or alias == cl:
                 r = self._resolve_exe(exe)
-                self._cache[cmd] = r
+                self._cache[cl] = r
                 return r
-        clean = re.sub(r"\b(найди|открой|запусти|включи|покажи|поищи)\b", "", cmd).strip()
-        if 0 < len(clean.split()) <= 3:
+        clean = re.sub(r"\b(найди|открой|запусти|включи|покажи|поищи)\b", "", cl).strip()
+        if clean:
             m = self._fuzzy(clean, list(self.aliases.keys()))
             if m:
                 r = self._resolve_exe(self.aliases[m])
-                self._cache[cmd] = r
+                self._cache[cl] = r
                 return r
-        # 2. Steam
-        if self._steam_ready:
-            for gn, ep in self._steam_cache.items():
-                if gn in cmd or cmd in gn:
+        if self.steam:
+            for gn, ep in self._cache.items():
+                if gn in cl or cl in gn:
                     if os.path.exists(ep):
-                        self._cache[cmd] = ep
                         return ep
-        # 3. Direct
-        if shutil.which(cmd):
-            r = shutil.which(cmd)
-            self._cache[cmd] = r
-            return r
-        if shutil.which(cmd + ".exe"):
-            r = shutil.which(cmd + ".exe")
-            self._cache[cmd] = r
-            return r
-        # 4. Registry
-        if self._reg_ready:
-            if cmd in self._reg_cache and os.path.exists(self._reg_cache[cmd]):
-                self._cache[cmd] = self._reg_cache[cmd]
-                return self._reg_cache[cmd]
-            m = self._fuzzy(cmd, list(self._reg_cache.keys()), 0.7)
-            if m and os.path.exists(self._reg_cache[m]):
-                self._cache[cmd] = self._reg_cache[m]
-                return self._reg_cache[m]
-        # 5. Start Menu
-        if self._lnk_ready:
-            if cmd in self._lnk_cache:
-                t = self._resolve_lnk(self._lnk_cache[cmd])
-                if t:
-                    self._cache[cmd] = t
-                    return t
-            m = self._fuzzy(cmd, list(self._lnk_cache.keys()), 0.7)
-            if m:
-                t = self._resolve_lnk(self._lnk_cache[m])
-                if t:
-                    self._cache[cmd] = t
-                    return t
-        return cmd
+        return shutil.which(cl) or shutil.which(cl + ".exe") or cmd
 
+    def _fuzzy(self, target, cands, th=0.7):
+        best, br = None, 0.0
+        for c in cands:
+            r = difflib.SequenceMatcher(None, target.lower(), c.lower()).ratio()
+            if r > br and r >= th:
+                best, br = c, r
+        return best
 
-class SystemExecutor:
-    def __init__(self, config):
-        self.resolver = OmniResolver(config)
-        self.search_engines = config.get("search_engines", DEFAULT_CONFIG["search_engines"])
-        self.default_search = config.get("default_search", "yandex")
+    def _resolve_exe(self, exe):
+        if os.path.isabs(exe) and os.path.exists(exe):
+            return exe
+        found = shutil.which(exe)
+        if found:
+            return found
+        if not exe.lower().endswith(".exe"):
+            found = shutil.which(exe + ".exe")
+            if found:
+                return found
+        return exe
 
     def search_web(self, query, engine=None):
         engine = engine or self.default_search
-        url = self.search_engines.get(engine, self.search_engines["yandex"]) + urllib.parse.quote(query)
+        url = self.search.get(engine, self.search["yandex"]) + urllib.parse.quote(query)
         try:
             webbrowser.open(url)
-            return f"В {engine.capitalize()}: {query}"
+            return f"Поиск: {query}"
         except Exception as e:
             return f"Ошибка поиска: {e}"
 
@@ -815,126 +488,76 @@ class SystemExecutor:
                 else:
                     ctype = "app"
             if ctype == "system":
-                r = subprocess.run(command, shell=True, capture_output=True, text=True,
-                                   timeout=60, creationflags=subprocess.CREATE_NO_WINDOW)
+                r = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60, creationflags=subprocess.CREATE_NO_WINDOW)
                 return r.stdout.strip() or r.stderr.strip() or "Готово"
-            elif ctype == "file":
-                if platform.system() == "Windows":
-                    os.startfile(command)
+            if ctype == "file":
+                os.startfile(command)
                 return f"Открыто: {Path(command).name}"
-            else:
-                # "app" type - try to launch
-                resolved = self.resolver.resolve(command)
-                # If resolved is a local file that exists - launch it
-                if resolved and os.path.isabs(resolved) and os.path.exists(resolved):
-                    subprocess.Popen(f'"{resolved}"', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                    return f"Запущено: {Path(resolved).name}"
-                # If resolved is a URL (http/https) - open in browser
-                if resolved and resolved.startswith(("http://", "https://")):
-                    return self.open_url(resolved)
-                # If resolved looks like a .exe/.bat/.cmd - try to launch directly
-                if resolved and resolved.lower().endswith((".exe", ".bat", ".cmd")):
-                    try:
-                        subprocess.Popen(f'"{resolved}"', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                        return f"Запущено: {resolved}"
-                    except Exception:
-                        pass
-                return f"Не найдено: {command}"
+            resolved = self._resolve(command)
+            if resolved and os.path.isabs(resolved) and os.path.exists(resolved):
+                subprocess.Popen(f'"{resolved}"', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                return f"Запущено: {Path(resolved).name}"
+            if resolved and resolved.startswith(("http://", "https://")):
+                return self.open_url(resolved)
+            if resolved and resolved.lower().endswith((".exe", ".bat", ".cmd")):
+                subprocess.Popen(f'"{resolved}"', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                return f"Запущено: {resolved}"
+            return f"Не найдено: {command}"
         except Exception as e:
             return f"Ошибка: {e}"
 
 
-class AIManager:
-    def __init__(self, config):
-        self.or_cfg = config.get("openrouter", DEFAULT_CONFIG["openrouter"])
-        self.oll_cfg = config.get("ollama", DEFAULT_CONFIG["ollama"])
-        self.provider = config.get("ai_provider", "openrouter")
-        self.api_key = self.or_cfg.get("api_key", "")
-        self.or_model = self.or_cfg.get("model", "google/gemini-2.0-flash-001")
-        self.oll_model = self.oll_cfg.get("model", "qwen3:1.7b")
-        self.oll_url = self.oll_cfg.get("base_url", "http://localhost:11434")
-        self.max_tokens = self.or_cfg.get("max_tokens", 2048)
-        self.temperature = self.or_cfg.get("temperature", 0.7)
-        self.history = [{"role": "system", "content": "Ты МИРА - дружелюбный ИИ-ассистент. Отвечай кратко, по-делу, на русском. Используй эмодзи умеренно."}]
-        self.or_available = bool(self.api_key)
-        self.oll_available = False
-        self._checked_ollama = False
-        self._lock = threading.Lock()
+# ══════════════════════════════════════════════════════════════
+# AI MANAGER
+# ══════════════════════════════════════════════════════════════
 
-    def check_ollama_async(self):
-        def _check():
-            if self._checked_ollama:
-                return
-            self._checked_ollama = True
-            try:
-                req = urllib.request.Request(f"{self.oll_url}/api/tags")
-                with urllib.request.urlopen(req, timeout=2) as r:
-                    self.oll_available = r.status == 200
-            except Exception:
-                self.oll_available = False
-        threading.Thread(target=_check, daemon=True).start()
+
+class AI:
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.provider = cfg.get("ai_provider", "openrouter")
+        self.history = [{"role": "system", "content": "Ты МИРА — умный ИИ-ассистент. Отвечай кратко, по-делу, на русском."}]
+        self._lock = threading.Lock()
 
     def ask(self, prompt):
         self.history.append({"role": "user", "content": prompt})
         if len(self.history) > 11:
             self.history = [self.history[0]] + self.history[-9:]
-        if self.provider == "openrouter" and self.or_available:
-            return self._ask_openrouter()
-        elif self.provider == "ollama" and self.oll_available:
+        if self.provider == "ollama":
             return self._ask_ollama()
-        elif self.or_available:
-            return self._ask_openrouter()
-        elif self.oll_available:
-            return self._ask_ollama()
-        else:
-            self.check_ollama_async()
-            return "AI недоступна. Настройте OpenRouter API в настройках или запустите Ollama."
+        return self._ask_cloud()
 
-    def _ask_openrouter(self):
+    def _ask_cloud(self):
+        pc = self.cfg.get(self.provider, {})
+        key = pc.get("api_key", "")
+        url = pc.get("base_url", "")
+        model = pc.get("model", "")
+        if not key or not url or not model:
+            return f"Настройте {self.provider}: нужен API Key, Base URL и Model."
         try:
-            payload = json.dumps({
-                "model": self.or_model,
-                "messages": self.history,
-                "max_tokens": self.max_tokens,
-                "temperature": self.temperature,
-            }).encode()
-            req = urllib.request.Request(
-                self.or_cfg["base_url"],
-                data=payload,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                    "X-Title": "MIRA Assistant",
-                }
-            )
-            with urllib.request.urlopen(req, timeout=30) as r:
+            payload = json.dumps({"model": model, "messages": self.history}).encode()
+            req = urllib.request.Request(url, data=payload, headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=60) as r:
                 data = json.loads(r.read())
                 ans = data["choices"][0]["message"]["content"]
                 self.history.append({"role": "assistant", "content": ans})
                 return ans.strip()
         except urllib.error.HTTPError as e:
             if e.code in (401, 403):
-                return "Неверный API-ключ OpenRouter. Проверьте ключ в настройках."
-            elif e.code == 429:
-                return "Превышен лимит запросов OpenRouter. Подождите немного."
-            elif e.code >= 500:
-                return f"Ошибка сервера OpenRouter ({e.code}). Попробуйте позже."
-            return f"Ошибка OpenRouter ({e.code}): {e.reason}"
+                return "Неверный API-ключ. Проверьте настройки."
+            if e.code == 429:
+                return "Превышен лимит запросов. Подождите."
+            return f"Ошибка {self.provider} ({e.code}): {e.reason}"
         except Exception as e:
-            return f"Ошибка подключения к OpenRouter: {e}"
+            return f"Ошибка подключения к {self.provider}: {e}"
 
     def _ask_ollama(self):
+        pc = self.cfg.get("ollama", {})
+        url = pc.get("base_url", "http://localhost:11434")
+        model = pc.get("model", "qwen3:1.7b")
         try:
-            payload = json.dumps({
-                "model": self.oll_model,
-                "messages": self.history,
-                "stream": False,
-            }).encode()
-            req = urllib.request.Request(
-                f"{self.oll_url}/api/chat",
-                data=payload,
-                headers={"Content-Type": "application/json"}
-            )
+            payload = json.dumps({"model": model, "messages": self.history, "stream": False}).encode()
+            req = urllib.request.Request(f"{url}/api/chat", data=payload, headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 ans = json.loads(r.read())["message"]["content"]
                 self.history.append({"role": "assistant", "content": ans})
@@ -945,29 +568,15 @@ class AIManager:
     def clear(self):
         self.history = [self.history[0]]
 
-    @property
-    def available(self):
-        if self.provider == "openrouter":
-            return self.or_available
-        return self.oll_available
 
-    def set_provider(self, provider):
-        self.provider = provider
-
-    def set_api_key(self, key):
-        self.api_key = key
-        self.or_available = bool(key)
-
-    def set_or_model(self, model):
-        self.or_model = model
-
-    def set_oll_model(self, model):
-        self.oll_model = model
+# ══════════════════════════════════════════════════════════════
+# VOICE
+# ══════════════════════════════════════════════════════════════
 
 
-class VoiceManager:
-    def __init__(self, config):
-        vc = config.get("voice", DEFAULT_CONFIG["voice"])
+class Voice:
+    def __init__(self, cfg):
+        vc = cfg.get("voice", DEFAULT_CONFIG["voice"])
         self.rec = sr.Recognizer()
         self.rec.energy_threshold = 300
         self.rec.dynamic_energy_threshold = True
@@ -982,10 +591,10 @@ class VoiceManager:
             pass
         try:
             self.engine = pyttsx3.init()
-            self.engine.setProperty("rate", vc.get("speed", 160))
-            for voice in self.engine.getProperty("voices"):
-                if "ru" in voice.id.lower():
-                    self.engine.setProperty("voice", voice.id)
+            self.engine.setProperty("rate", vc.get("speed", 150))
+            for v in self.engine.getProperty("voices"):
+                if "ru" in v.id.lower():
+                    self.engine.setProperty("voice", v.id)
                     break
         except Exception:
             pass
@@ -1008,30 +617,26 @@ class VoiceManager:
                     pass
         threading.Thread(target=_t, daemon=True).start()
 
-# === 7. THREADS ===
+
+# ══════════════════════════════════════════════════════════════
+# WORKERS
+# ══════════════════════════════════════════════════════════════
 
 
 class AIWorker(QThread):
     result = pyqtSignal(str)
-
     def __init__(self, ai, prompt):
         super().__init__()
-        self.ai = ai
-        self.prompt = prompt
-
+        self.ai, self.prompt = ai, prompt
     def run(self):
         self.result.emit(self.ai.ask(self.prompt))
 
 
 class CmdWorker(QThread):
     result = pyqtSignal(str)
-
     def __init__(self, executor, command, ctype):
         super().__init__()
-        self.executor = executor
-        self.command = command
-        self.ctype = ctype
-
+        self.executor, self.command, self.ctype = executor, command, ctype
     def run(self):
         self.result.emit(self.executor.execute(self.command, self.ctype))
 
@@ -1039,17 +644,12 @@ class CmdWorker(QThread):
 class ScriptWorker(QThread):
     progress = pyqtSignal(int, int, str)
     finished = pyqtSignal(str)
-
     def __init__(self, executor, name, commands):
         super().__init__()
-        self.executor = executor
-        self.name = name
-        self.commands = commands
+        self.executor, self.name, self.commands = executor, name, commands
         self._stop = False
-
     def stop(self):
         self._stop = True
-
     def run(self):
         for i, cmd in enumerate(self.commands):
             if self._stop:
@@ -1062,230 +662,10 @@ class ScriptWorker(QThread):
             time.sleep(1.2)
         self.finished.emit(self.name)
 
-# === 8. SIDEBAR ===
 
-
-class Sidebar(QFrame):
-    nav_changed = pyqtSignal(str, str)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("sidebar")
-        self.setFixedWidth(240)
-        self.setStyleSheet(f"""
-            #sidebar {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {Theme.SURFACE}, stop:1 {Theme.BG});
-                border-right: 1px solid {Theme.BORDER};
-            }}
-        """)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(16, 24, 16, 24)
-        lay.setSpacing(4)
-
-        # Logo
-        logo_frame = QFrame()
-        logo_frame.setFixedHeight(48)
-        logo_lay = QHBoxLayout(logo_frame)
-        logo_lay.setContentsMargins(8, 0, 0, 0)
-        logo_lay.setSpacing(12)
-
-        # Logo icon
-        logo_icon = QLabel("M")
-        logo_icon.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
-        logo_icon.setFixedSize(36, 36)
-        logo_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo_icon.setStyleSheet(f"""
-            QLabel {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 {Theme.ACCENT}, stop:1 {Theme.ACCENT_LIGHT});
-                color: white;
-                border-radius: 10px;
-                font-weight: bold;
-            }}
-        """)
-        logo_lay.addWidget(logo_icon)
-
-        logo_text = QLabel("MIRA")
-        logo_text.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
-        logo_text.setStyleSheet(f"color: {Theme.TEXT}; letter-spacing: 3px; background: transparent;")
-        logo_lay.addWidget(logo_text)
-        logo_lay.addStretch()
-        lay.addWidget(logo_frame)
-        lay.addSpacing(24)
-
-        # Section label
-        section = QLabel("NAVIGATION")
-        section.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 10px; font-weight: 600; letter-spacing: 2px; padding-left: 12px; background: transparent;")
-        lay.addWidget(section)
-        lay.addSpacing(8)
-
-        # Nav buttons
-        self.nav_btns = {}
-        items = [
-            ("chat", "\U0001F4AC", "Chat"),
-            ("scripts", "\U0001F3AC", "Scripts"),
-            ("notes", "\U0001F4DD", "Notes"),
-            ("system", "\U0001F4CA", "System Monitor"),
-            ("contacts", "\U0001F4CC", "Contacts"),
-            ("settings", "\u2699\uFE0F", "Settings"),
-            ("about", "\u2139\uFE0F", "About"),
-        ]
-        for nid, icon, label in items:
-            btn = QToolButton()
-            btn.setText(f"  {icon}  {label}")
-            btn.setProperty("nav_id", nid)
-            btn.setFixedHeight(44)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setStyleSheet(f"""
-                QToolButton {{
-                    background: transparent;
-                    color: {Theme.TEXT_DIM};
-                    border: none;
-                    border-radius: 10px;
-                    font-size: 14px;
-                    font-family: 'Segoe UI';
-                    text-align: left;
-                    padding-left: 12px;
-                }}
-                QToolButton:hover {{
-                    background: {Theme.CARD_HOVER};
-                    color: {Theme.TEXT};
-                }}
-                QToolButton:checked {{
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 {Theme.ACCENT_DARK}, stop:1 {Theme.ACCENT});
-                    color: white;
-                    font-weight: 600;
-                }}
-            """)
-            btn.setCheckable(True)
-            btn.clicked.connect(self._on_nav)
-            lay.addWidget(btn)
-            self.nav_btns[nid] = btn
-
-        self.nav_btns["chat"].setChecked(True)
-        lay.addStretch()
-
-        # Status
-        status_frame = QFrame()
-        status_frame.setStyleSheet(f"""
-            QFrame {{
-                background: {Theme.CARD};
-                border-radius: 10px;
-                padding: 8px 12px;
-            }}
-        """)
-        status_lay = QHBoxLayout(status_frame)
-        status_lay.setContentsMargins(8, 8, 8, 8)
-        status_lay.setSpacing(8)
-        self.dot = PulseIndicator(color=Theme.SUCCESS)
-        self.dot.set_active(True)
-        status_lay.addWidget(self.dot)
-        status_text = QLabel("Online")
-        status_text.setStyleSheet(f"color: {Theme.SUCCESS}; font-size: 12px; font-weight: 500; background: transparent;")
-        status_lay.addWidget(status_text)
-        status_lay.addStretch()
-        lay.addWidget(status_frame)
-
-    def _on_nav(self):
-        btn = self.sender()
-        nid = btn.property("nav_id")
-        old = None
-        for k, b in self.nav_btns.items():
-            if b.isChecked() and k != nid:
-                b.setChecked(False)
-                old = k
-            elif k == nid:
-                b.setChecked(True)
-        direction = "left"
-        order = ["chat", "scripts", "notes", "system", "contacts", "settings", "about"]
-        if old and nid in order and old in order:
-            direction = "left" if order.index(nid) > order.index(old) else "right"
-        self.nav_changed.emit(nid, direction)
-
-    def select(self, nid):
-        if nid in self.nav_btns:
-            self.nav_btns[nid].click()
-
-# === 9. TITLE BAR ===
-
-
-class TitleBar(QFrame):
-    def __init__(self, parent):
-        super().__init__(parent)
-        self._parent = parent
-        self.setFixedHeight(44)
-        self._drag = None
-        self.setStyleSheet(f"""
-            QFrame {{
-                background: {Theme.SURFACE};
-                border-bottom: 1px solid {Theme.BORDER};
-            }}
-        """)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(260, 0, 12, 0)
-        lay.setSpacing(16)
-
-        self.page_icon = QLabel("\U0001F4AC")
-        self.page_icon.setFont(QFont("Segoe UI Emoji", 14))
-        self.page_icon.setStyleSheet("background: transparent;")
-        lay.addWidget(self.page_icon)
-
-        self.page_lbl = QLabel("Chat")
-        self.page_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
-        self.page_lbl.setStyleSheet(f"color: {Theme.TEXT}; background: transparent;")
-        lay.addWidget(self.page_lbl)
-
-        lay.addStretch()
-
-        # Window buttons
-        for txt, func, color in [
-            ("\u2014", self._parent.showMinimized, Theme.TEXT_DIM),
-            ("\u25A1", self._parent._toggle_maximize, Theme.TEXT_DIM),
-            ("\u2715", self._parent.close, Theme.ERROR)
-        ]:
-            b = QPushButton(txt)
-            b.setFixedSize(36, 30)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setStyleSheet(f"""
-                QPushButton {{
-                    background: transparent;
-                    color: {color};
-                    border: none;
-                    font-size: 13px;
-                    border-radius: 6px;
-                }}
-                QPushButton:hover {{
-                    background: {Theme.CARD_HOVER};
-                }}
-            """)
-            b.clicked.connect(func)
-            lay.addWidget(b)
-
-    def set_page(self, text):
-        self.page_lbl.setText(text)
-        icons = {
-            "Chat": "\U0001F4AC", "Scripts": "\U0001F3AC", "Notes": "\U0001F4DD",
-            "System": "\U0001F4CA", "Contacts": "\U0001F4CC", "Settings": "\u2699\uFE0F", "About": "\u2139\uFE0F"
-        }
-        self.page_icon.setText(icons.get(text, "\U0001F4AC"))
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and not self._parent.isMaximized():
-            self._drag = event.globalPosition().toPoint() - self._parent.frameGeometry().topLeft()
-
-    def mouseMoveEvent(self, event):
-        if self._drag and event.buttons() & Qt.MouseButton.LeftButton and not self._parent.isMaximized():
-            self._parent.move(event.globalPosition().toPoint() - self._drag)
-
-    def mouseReleaseEvent(self, event):
-        self._drag = None
-
-    def mouseDoubleClickEvent(self, event):
-        self._parent._toggle_maximize()
-
-# === 10. CHAT PANEL ===
+# ══════════════════════════════════════════════════════════════
+# PANELS
+# ══════════════════════════════════════════════════════════════
 
 
 class ChatPanel(QFrame):
@@ -1298,210 +678,274 @@ class ChatPanel(QFrame):
         self.chat = QTextEdit()
         self.chat.setReadOnly(True)
         self.chat.setStyleSheet(f"""
-            QTextEdit {{
-                background: transparent;
-                border: none;
-                color: {Theme.TEXT};
-                font-family: 'Segoe UI';
-                font-size: 14px;
-                padding: 24px 32px;
-                line-height: 1.6;
-            }}
-            QScrollBar:vertical {{
-                background: transparent;
-                width: 10px;
-                margin: 0;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {Theme.CARD_HOVER};
-                border-radius: 5px;
-                min-height: 40px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background: {Theme.ACCENT}60;
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0;
-            }}
+            QTextEdit{{background:transparent;border:none;color:{T.TX};font-family:'Segoe UI';font-size:14px;padding:28px 36px;}}
+            QScrollBar:vertical{{background:transparent;width:8px;}}
+            QScrollBar::handle:vertical{{background:{T.CH};border-radius:4px;min-height:40px;}}
+            QScrollBar::handle:vertical:hover{{background:{T.A}60;}}
+            QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{{height:0;}}
         """)
         lay.addWidget(self.chat, 1)
 
-        # Status indicator
-        ind_row = QHBoxLayout()
-        ind_row.setContentsMargins(32, 6, 32, 6)
-        self.indicator = PulseIndicator(color=Theme.ACCENT_LIGHT)
-        ind_row.addWidget(self.indicator)
+        self.status_bar = QHBoxLayout()
+        self.status_bar.setContentsMargins(36, 4, 36, 4)
+        self.indicator = Pulse(size=10, color=T.AH)
+        self.status_bar.addWidget(self.indicator)
         self.status_lbl = QLabel("")
-        self.status_lbl.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 12px; background: transparent;")
-        ind_row.addWidget(self.status_lbl)
-        ind_row.addStretch()
-        wrap = QWidget()
-        wrap.setLayout(ind_row)
-        lay.addWidget(wrap)
+        self.status_lbl.setStyleSheet(f"color:{T.TM};font-size:11px;background:transparent;")
+        self.status_bar.addWidget(self.status_lbl)
+        self.status_bar.addStretch()
+        sw = QWidget()
+        sw.setLayout(self.status_bar)
+        lay.addWidget(sw)
 
-        # Input area
         inp_frame = QFrame()
-        inp_frame.setStyleSheet(f"""
-            QFrame {{
-                background: {Theme.SURFACE};
-                border-top: 1px solid {Theme.BORDER};
-                padding: 16px 28px;
-            }}
-        """)
+        inp_frame.setStyleSheet(f"QFrame{{background:{T.SF};border-top:1px solid {T.BD};padding:16px 28px;}}")
         inp_lay = QHBoxLayout(inp_frame)
         inp_lay.setContentsMargins(0, 0, 0, 0)
-        inp_lay.setSpacing(12)
+        inp_lay.setSpacing(10)
 
-        self.inp = FluentInput("Type a command or question...")
+        self.inp = QLineEdit()
+        self.inp.setPlaceholderText("Напишите сообщение...")
         inp_lay.addWidget(self.inp, 1)
 
-        self.voice_btn = GlowButton("\U0001F3A4")
+        self.voice_btn = Btn("🎤")
         self.voice_btn.setFixedWidth(48)
         inp_lay.addWidget(self.voice_btn)
 
-        self.send_btn = GlowButton("\u27A4", accent=True)
+        self.send_btn = Btn("➤", accent=True)
         self.send_btn.setFixedWidth(48)
         inp_lay.addWidget(self.send_btn)
 
         lay.addWidget(inp_frame)
 
     def set_status(self, text, active=True):
-        self.indicator.set_active(active)
+        self.indicator.set_on(active)
         self.status_lbl.setText(text)
 
-# === 11. SCRIPT PANEL ===
 
-
-class ScriptPanel(QFrame):
-    run_signal = pyqtSignal(str)
-    create_signal = pyqtSignal()
-    edit_signal = pyqtSignal(str)
-
-    def __init__(self, config, parent=None):
+class SettingsPanel(QFrame):
+    def __init__(self, cfg, parent=None):
         super().__init__(parent)
-        self.cfg = config
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(36, 28, 36, 28)
-        lay.setSpacing(16)
-        title = QLabel("Scripts")
-        title.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
-        title.setStyleSheet(f"color:{Theme.TEXT};background:transparent;")
+        self.cfg = cfg
+        self._parent = parent
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea{background:transparent;border:none;}QScrollBar:vertical{background:transparent;width:8px;}QScrollBar::handle:vertical{background:#282845;border-radius:4px;min-height:30px;}QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}")
+        container = QWidget()
+        container.setStyleSheet("background:transparent;")
+        lay = QVBoxLayout(container)
+        lay.setContentsMargins(40, 32, 40, 32)
+        lay.setSpacing(20)
+
+        title = QLabel("Настройки")
+        title.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
+        title.setStyleSheet(f"color:{T.TX};background:transparent;")
         lay.addWidget(title)
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet(f"QScrollArea{{background:transparent;border:none;}}QScrollBar:vertical{{background:transparent;width:8px;}}QScrollBar::handle:vertical{{background:{Theme.CARD_HOVER};border-radius:4px;min-height:30px;}}QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{{height:0;}}")
-        self.content = QWidget()
-        self.content.setStyleSheet("background:transparent;")
-        self.scroll.setWidget(self.content)
-        self.cl = QVBoxLayout(self.content)
-        self.cl.setContentsMargins(0, 0, 0, 0)
-        self.cl.setSpacing(10)
-        self.cl.addStretch()
-        lay.addWidget(self.scroll, 1)
-        add_btn = GlowButton("+ New Script", accent=True)
-        add_btn.clicked.connect(self.create_signal.emit)
-        lay.addWidget(add_btn)
-        self.refresh()
 
-    def refresh(self):
-        while self.cl.count():
-            item = self.cl.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-        scripts = self.cfg.get("scripts", {})
-        if not scripts:
-            e = QLabel("No scripts yet. Create your first one!")
-            e.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            e.setStyleSheet(f"color:{Theme.TEXT_MUTED};padding:50px;font-size:14px;background:transparent;")
-            self.cl.addWidget(e)
+        card1 = Card()
+        c1 = QVBoxLayout(card1)
+        c1.setContentsMargins(24, 20, 24, 20)
+        c1.setSpacing(12)
+        lbl = QLabel("Провайдер ИИ")
+        lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        lbl.setStyleSheet(f"color:{T.AH};background:transparent;")
+        c1.addWidget(lbl)
+        self.prov_combo = QComboBox()
+        self.prov_combo.addItems(["openrouter", "polza", "router", "custom", "ollama"])
+        self.prov_combo.setCurrentText(cfg.get("ai_provider", "openrouter"))
+        self.prov_combo.currentTextChanged.connect(self._on_prov)
+        c1.addWidget(self.prov_combo)
+        lay.addWidget(card1)
+
+        card2 = Card()
+        c2 = QVBoxLayout(card2)
+        c2.setContentsMargins(24, 20, 24, 20)
+        c2.setSpacing(12)
+        lbl2 = QLabel("API Key")
+        lbl2.setStyleSheet(f"color:{T.TD};font-size:12px;font-weight:500;background:transparent;")
+        c2.addWidget(lbl2)
+        api_row = QHBoxLayout()
+        api_row.setSpacing(8)
+        self.api_input = QLineEdit()
+        self.api_input.setPlaceholderText("sk-...")
+        self.api_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_input.textChanged.connect(self._on_field)
+        api_row.addWidget(self.api_input, 1)
+        self.show_btn = QPushButton("Показать")
+        self.show_btn.setFixedWidth(90)
+        self.show_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.show_btn.clicked.connect(self._toggle_key)
+        api_row.addWidget(self.show_btn)
+        c2.addLayout(api_row)
+        self.status_lbl = QLabel("")
+        self.status_lbl.setFont(QFont("Consolas", 11))
+        c2.addWidget(self.status_lbl)
+        lay.addWidget(card2)
+
+        card3 = Card()
+        c3 = QVBoxLayout(card3)
+        c3.setContentsMargins(24, 20, 24, 20)
+        c3.setSpacing(12)
+        lbl3 = QLabel("Base URL")
+        lbl3.setStyleSheet(f"color:{T.TD};font-size:12px;font-weight:500;background:transparent;")
+        c3.addWidget(lbl3)
+        self.url_input = QLineEdit()
+        self.url_input.setPlaceholderText("https://api.example.com/v1/chat/completions")
+        self.url_input.textChanged.connect(self._on_field)
+        c3.addWidget(self.url_input)
+        lay.addWidget(card3)
+
+        card4 = Card()
+        c4 = QVBoxLayout(card4)
+        c4.setContentsMargins(24, 20, 24, 20)
+        c4.setSpacing(12)
+        lbl4 = QLabel("Модель")
+        lbl4.setStyleSheet(f"color:{T.TD};font-size:12px;font-weight:500;background:transparent;")
+        c4.addWidget(lbl4)
+        self.model_input = QLineEdit()
+        self.model_input.setPlaceholderText("gpt-4o, deepseek-chat, qwen3:1.7b ...")
+        self.model_input.textChanged.connect(self._on_field)
+        c4.addWidget(self.model_input)
+        lay.addWidget(card4)
+
+        act_card = Card()
+        ac = QVBoxLayout(act_card)
+        ac.setContentsMargins(24, 20, 24, 20)
+        ac.setSpacing(12)
+        lbl5 = QLabel("Действия")
+        lbl5.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        lbl5.setStyleSheet(f"color:{T.AH};background:transparent;")
+        ac.addWidget(lbl5)
+        br = QHBoxLayout()
+        br.setSpacing(10)
+        r1 = Btn("Обновить статус")
+        r1.clicked.connect(self._refresh)
+        br.addWidget(r1)
+        r2 = Btn("Очистить историю ИИ")
+        r2.clicked.connect(self._clear)
+        br.addWidget(r2)
+        br.addStretch()
+        ac.addLayout(br)
+        lay.addWidget(act_card)
+
+        lay.addStretch()
+        scroll.setWidget(container)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
+        self._sync(self.prov_combo.currentText())
+
+    def _on_prov(self, p):
+        self.cfg["ai_provider"] = p
+        save_config(self.cfg)
+        if hasattr(self._parent, "_ai"):
+            self._parent._ai.provider = p
+        self._sync(p)
+
+    def _sync(self, p):
+        pc = self.cfg.get(p, {})
+        self.api_input.blockSignals(True)
+        self.url_input.blockSignals(True)
+        self.model_input.blockSignals(True)
+        self.api_input.setText(pc.get("api_key", ""))
+        self.url_input.setText(pc.get("base_url", ""))
+        self.model_input.setText(pc.get("model", ""))
+        self.api_input.blockSignals(False)
+        self.url_input.blockSignals(False)
+        self.model_input.blockSignals(False)
+        self.api_input.setVisible(p != "ollama")
+        self._upd_status()
+
+    def _on_field(self):
+        p = self.prov_combo.currentText()
+        self.cfg.setdefault(p, {})["api_key"] = self.api_input.text().strip()
+        self.cfg.setdefault(p, {})["base_url"] = self.url_input.text().strip()
+        self.cfg.setdefault(p, {})["model"] = self.model_input.text().strip()
+        save_config(self.cfg)
+        self._upd_status()
+
+    def _toggle_key(self):
+        if self.api_input.echoMode() == QLineEdit.EchoMode.Password:
+            self.api_input.setEchoMode(QLineEdit.EchoMode.Normal)
+            self.show_btn.setText("Скрыть")
         else:
-            for name, cmds in scripts.items():
-                self.cl.addWidget(self._card(name, cmds))
-        self.cl.addStretch()
+            self.api_input.setEchoMode(QLineEdit.EchoMode.Password)
+            self.show_btn.setText("Показать")
 
-    def _card(self, name, cmds):
-        card = GlassCard()
-        card.setHoverMode(True)
-        cl = QVBoxLayout(card)
-        cl.setContentsMargins(18, 14, 18, 14)
-        cl.setSpacing(8)
-        header = QHBoxLayout()
-        h = QLabel(name)
-        h.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
-        h.setStyleSheet(f"color:{Theme.TEXT};background:transparent;")
-        header.addWidget(h)
-        header.addStretch()
-        run = GlowButton("Play", accent=True)
-        run.setFixedWidth(60)
-        run.clicked.connect(lambda: self.run_signal.emit(name))
-        header.addWidget(run)
-        edit = GlowButton("Edit")
-        edit.setFixedWidth(50)
-        edit.clicked.connect(lambda: self.edit_signal.emit(name))
-        header.addWidget(edit)
-        delete = GlowButton("Del")
-        delete.setFixedWidth(46)
-        delete.setStyleSheet(f"QPushButton{{background:{Theme.CARD_HOVER};color:{Theme.ERROR};border:none;border-radius:8px;padding:8px;font-family:'Segoe UI';}}QPushButton:hover{{background:rgba(239,68,68,0.2);}}")
-        delete.clicked.connect(lambda: self._delete(name))
-        header.addWidget(delete)
-        cl.addLayout(header)
-        meta = QLabel(f"{len(cmds)} steps ~{len(cmds)*1.2:.0f}s")
-        meta.setStyleSheet(f"color:{Theme.TEXT_MUTED};font-size:12px;background:transparent;")
-        cl.addWidget(meta)
-        return card
+    def _upd_status(self):
+        p = self.prov_combo.currentText()
+        if p == "ollama":
+            self.status_lbl.setText("Локальный Ollama")
+            self.status_lbl.setStyleSheet(f"color:{T.WR};font-family:Consolas;font-size:11px;background:transparent;")
+        else:
+            has = all([self.api_input.text().strip(), self.url_input.text().strip(), self.model_input.text().strip()])
+            if has:
+                self.status_lbl.setText("✓ Конфигурация готова")
+                self.status_lbl.setStyleSheet(f"color:{T.OK};font-family:Consolas;font-size:11px;background:transparent;")
+            else:
+                miss = []
+                if not self.api_input.text().strip(): miss.append("API Key")
+                if not self.url_input.text().strip(): miss.append("URL")
+                if not self.model_input.text().strip(): miss.append("Model")
+                self.status_lbl.setText(f"Не хватает: {', '.join(miss)}")
+                self.status_lbl.setStyleSheet(f"color:{T.WR};font-family:Consolas;font-size:11px;background:transparent;")
 
-    def _delete(self, name):
-        if name in self.cfg.get("scripts", {}):
-            del self.cfg["scripts"][name]
-            save_config(self.cfg)
-            self.refresh()
+    def _refresh(self):
+        self._upd_status()
 
-# === 12. NOTES PANEL ===
+    def _clear(self):
+        if hasattr(self._parent, "_ai"):
+            self._parent._ai.clear()
 
 
 class NotesPanel(QFrame):
-    def __init__(self, config, parent=None):
+    def __init__(self, cfg, parent=None):
         super().__init__(parent)
-        self.cfg = config
+        self.cfg = cfg
         self._suspend = False
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(36, 28, 36, 28)
+        lay.setContentsMargins(40, 32, 40, 32)
         lay.setSpacing(16)
-        header = QHBoxLayout()
-        title = QLabel("Notes")
-        title.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
-        title.setStyleSheet(f"color:{Theme.TEXT};background:transparent;")
-        header.addWidget(title)
-        header.addStretch()
-        add_btn = GlowButton("+ New", accent=True)
-        add_btn.clicked.connect(self._new)
-        header.addWidget(add_btn)
-        lay.addLayout(header)
+        hdr = QHBoxLayout()
+        t = QLabel("Заметки")
+        t.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
+        t.setStyleSheet(f"color:{T.TX};background:transparent;")
+        hdr.addWidget(t)
+        hdr.addStretch()
+        add = Btn("+ Новая", accent=True)
+        add.clicked.connect(self._new)
+        hdr.addWidget(add)
+        lay.addLayout(hdr)
+
         content = QHBoxLayout()
         content.setSpacing(14)
         self.list_w = QListWidget()
-        self.list_w.setStyleSheet(f"QListWidget{{background:{Theme.SURFACE};border:1px solid {Theme.BORDER};border-radius:12px;padding:6px;color:{Theme.TEXT};font-family:'Segoe UI';font-size:13px;}}QListWidget::item{{padding:10px 12px;border-radius:8px;margin:2px 0;}}QListWidget::item:hover{{background:{Theme.CARD_HOVER};}}QListWidget::item:selected{{background:{Theme.ACCENT};color:white;}}")
+        self.list_w.setStyleSheet(f"""
+            QListWidget{{background:{T.SF};border:1px solid {T.BD};border-radius:12px;padding:6px;color:{T.TX};font-size:13px;}}
+            QListWidget::item{{padding:12px 14px;border-radius:8px;margin:2px 0;}}
+            QListWidget::item:hover{{background:{T.CH};}}
+            QListWidget::item:selected{{background:{T.A};color:white;}}
+        """)
         self.list_w.currentItemChanged.connect(self._on_select)
         self.list_w.setMaximumWidth(260)
         content.addWidget(self.list_w, 1)
+
         right = QVBoxLayout()
         right.setSpacing(8)
         self.date_lbl = QLabel("")
-        self.date_lbl.setStyleSheet(f"color:{Theme.TEXT_MUTED};font-size:12px;background:transparent;")
+        self.date_lbl.setStyleSheet(f"color:{T.TM};font-size:11px;background:transparent;")
         right.addWidget(self.date_lbl)
         self.title_edit = QLineEdit()
-        self.title_edit.setPlaceholderText("Title...")
-        self.title_edit.setStyleSheet(f"QLineEdit{{background:{Theme.CARD};border:1px solid {Theme.BORDER};border-radius:10px;padding:10px 14px;color:white;font-family:'Segoe UI';font-size:16px;font-weight:bold;}}QLineEdit:focus{{border-color:{Theme.ACCENT};}}")
+        self.title_edit.setPlaceholderText("Заголовок...")
         self.title_edit.textChanged.connect(self._auto_save)
         right.addWidget(self.title_edit)
         self.text_edit = QPlainTextEdit()
-        self.text_edit.setPlaceholderText("Note text...")
-        self.text_edit.setStyleSheet(f"QPlainTextEdit{{background:{Theme.CARD};border:1px solid {Theme.BORDER};border-radius:10px;padding:12px 14px;color:{Theme.TEXT};font-family:'Segoe UI';font-size:14px;}}QPlainTextEdit:focus{{border-color:{Theme.ACCENT};}}")
+        self.text_edit.setPlaceholderText("Текст заметки...")
         self.text_edit.textChanged.connect(self._auto_save)
         right.addWidget(self.text_edit, 1)
-        del_btn = GlowButton("Delete")
-        del_btn.setStyleSheet(f"QPushButton{{background:{Theme.CARD_HOVER};color:{Theme.ERROR};border:none;border-radius:8px;padding:8px 14px;}}QPushButton:hover{{background:rgba(239,68,68,0.2);}}")
+        del_btn = Btn("Удалить")
+        del_btn.setStyleSheet(f"QPushButton{{background:{T.CH};color:{T.ER};border:1px solid {T.ER}40;border-radius:8px;padding:10px 16px;font-size:12px;}}QPushButton:hover{{background:{T.ER}20;border:1px solid {T.ER}80;}}")
         del_btn.clicked.connect(self._delete)
         right.addWidget(del_btn)
         content.addLayout(right, 3)
@@ -1511,7 +955,7 @@ class NotesPanel(QFrame):
     def refresh(self):
         self.list_w.clear()
         for i, n in enumerate(self.cfg.get("notes", [])):
-            t = n.get("title", "Untitled") or "Untitled"
+            t = n.get("title", "Без названия") or "Без названия"
             d = n.get("date", "")
             item = QListWidgetItem(f"{t}\n{d}")
             item.setData(Qt.ItemDataRole.UserRole, i)
@@ -1519,15 +963,15 @@ class NotesPanel(QFrame):
 
     def _new(self):
         notes = self.cfg.setdefault("notes", [])
-        notes.insert(0, {"title": "New Note", "text": "", "date": datetime.now().strftime("%d.%m.%Y %H:%M")})
+        notes.insert(0, {"title": "Новая заметка", "text": "", "date": datetime.now().strftime("%d.%m.%Y %H:%M")})
         save_config(self.cfg)
         self.refresh()
         self.list_w.setCurrentRow(0)
 
-    def _on_select(self, current, _prev):
-        if not current:
+    def _on_select(self, cur, _prev):
+        if not cur:
             return
-        idx = current.data(Qt.ItemDataRole.UserRole)
+        idx = cur.data(Qt.ItemDataRole.UserRole)
         notes = self.cfg.get("notes", [])
         if 0 <= idx < len(notes):
             self._suspend = True
@@ -1539,23 +983,23 @@ class NotesPanel(QFrame):
     def _auto_save(self):
         if self._suspend:
             return
-        current = self.list_w.currentItem()
-        if not current:
+        cur = self.list_w.currentItem()
+        if not cur:
             return
-        idx = current.data(Qt.ItemDataRole.UserRole)
+        idx = cur.data(Qt.ItemDataRole.UserRole)
         notes = self.cfg.get("notes", [])
         if 0 <= idx < len(notes):
-            notes[idx]["title"] = self.title_edit.text() or "Untitled"
+            notes[idx]["title"] = self.title_edit.text() or "Без названия"
             notes[idx]["text"] = self.text_edit.toPlainText()
             notes[idx]["date"] = datetime.now().strftime("%d.%m.%Y %H:%M")
             save_config(self.cfg)
-            current.setText(f"{notes[idx]['title']}\n{notes[idx]['date']}")
+            cur.setText(f"{notes[idx]['title']}\n{notes[idx]['date']}")
 
     def _delete(self):
-        current = self.list_w.currentItem()
-        if not current:
+        cur = self.list_w.currentItem()
+        if not cur:
             return
-        idx = current.data(Qt.ItemDataRole.UserRole)
+        idx = cur.data(Qt.ItemDataRole.UserRole)
         notes = self.cfg.get("notes", [])
         if 0 <= idx < len(notes):
             notes.pop(idx)
@@ -1564,328 +1008,245 @@ class NotesPanel(QFrame):
             self.title_edit.clear()
             self.text_edit.clear()
 
-# === 13. SYSTEM MONITOR ===
+
+class ScriptsPanel(QFrame):
+    run_signal = pyqtSignal(str)
+    create_signal = pyqtSignal()
+    edit_signal = pyqtSignal(str)
+
+    def __init__(self, cfg, parent=None):
+        super().__init__(parent)
+        self.cfg = cfg
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(40, 32, 40, 32)
+        lay.setSpacing(16)
+        t = QLabel("Сценарии")
+        t.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
+        t.setStyleSheet(f"color:{T.TX};background:transparent;")
+        lay.addWidget(t)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setStyleSheet("QScrollArea{background:transparent;border:none;}QScrollBar:vertical{background:transparent;width:8px;}QScrollBar::handle:vertical{background:#282845;border-radius:4px;min-height:30px;}QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}")
+        self.content = QWidget()
+        self.content.setStyleSheet("background:transparent;")
+        self.scroll.setWidget(self.content)
+        self.cl = QVBoxLayout(self.content)
+        self.cl.setContentsMargins(0, 0, 0, 0)
+        self.cl.setSpacing(10)
+        self.cl.addStretch()
+        lay.addWidget(self.scroll, 1)
+        add = Btn("+ Новый сценарий", accent=True)
+        add.clicked.connect(self.create_signal.emit)
+        lay.addWidget(add)
+        self.refresh()
+
+    def refresh(self):
+        while self.cl.count():
+            item = self.cl.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        scripts = self.cfg.get("scripts", {})
+        if not scripts:
+            e = QLabel("Нет сценариев. Создайте первый!")
+            e.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            e.setStyleSheet(f"color:{T.TM};padding:60px;font-size:14px;background:transparent;")
+            self.cl.addWidget(e)
+        else:
+            for name, cmds in scripts.items():
+                self.cl.addWidget(self._card(name, cmds))
+        self.cl.addStretch()
+
+    def _card(self, name, cmds):
+        card = Card()
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(20, 16, 20, 16)
+        cl.setSpacing(8)
+        hdr = QHBoxLayout()
+        h = QLabel(name)
+        h.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        h.setStyleSheet(f"color:{T.TX};background:transparent;")
+        hdr.addWidget(h)
+        hdr.addStretch()
+        run = Btn("▶", accent=True)
+        run.setFixedWidth(50)
+        run.clicked.connect(lambda: self.run_signal.emit(name))
+        hdr.addWidget(run)
+        edit = Btn("✎")
+        edit.setFixedWidth(40)
+        edit.clicked.connect(lambda: self.edit_signal.emit(name))
+        hdr.addWidget(edit)
+        delete = Btn("✕")
+        delete.setFixedWidth(40)
+        delete.setStyleSheet(f"QPushButton{{background:{T.CH};color:{T.ER};border:1px solid {T.ER}40;border-radius:8px;padding:6px;font-size:14px;}}QPushButton:hover{{background:{T.ER}20;}}")
+        delete.clicked.connect(lambda: self._delete(name))
+        hdr.addWidget(delete)
+        cl.addLayout(hdr)
+        meta = QLabel(f"{len(cmds)} шагов ~{len(cmds) * 1.2:.0f}с")
+        meta.setStyleSheet(f"color:{T.TM};font-size:11px;background:transparent;")
+        cl.addWidget(meta)
+        return card
+
+    def _delete(self, name):
+        if name in self.cfg.get("scripts", {}):
+            del self.cfg["scripts"][name]
+            save_config(self.cfg)
+            self.refresh()
 
 
-class SystemMonitorPanel(QFrame):
+class SystemPanel(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(36, 28, 36, 28)
-        lay.setSpacing(16)
-        title = QLabel("System Monitor")
-        title.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
-        title.setStyleSheet(f"color:{Theme.TEXT};background:transparent;")
-        lay.addWidget(title)
+        lay.setContentsMargins(40, 32, 40, 32)
+        lay.setSpacing(20)
+
+        t = QLabel("Системный монитор")
+        t.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
+        t.setStyleSheet(f"color:{T.TX};background:transparent;")
+        lay.addWidget(t)
+
         grid = QGridLayout()
-        grid.setSpacing(14)
-        self.cpu_card, self.cpu_val, self.cpu_bar = self._metric("CPU")
-        grid.addWidget(self.cpu_card, 0, 0)
-        self.ram_card, self.ram_val, self.ram_bar = self._metric("RAM")
-        grid.addWidget(self.ram_card, 0, 1)
-        self.disk_card, self.disk_val, self.disk_bar = self._metric("Disk")
-        grid.addWidget(self.disk_card, 0, 2)
-        info_card = GlassCard()
+        grid.setSpacing(16)
+        self.cpu_v, self.cpu_bar, self.cpu_d = self._m("CPU")
+        grid.addWidget(self.cpu_v[0], 0, 0)
+        self.ram_v, self.ram_bar, self.ram_d = self._m("RAM")
+        grid.addWidget(self.ram_v[0], 0, 1)
+        self.disk_v, self.disk_bar, self.disk_d = self._m("Диск")
+        grid.addWidget(self.disk_v[0], 0, 2)
+
+        info_card = Card()
         il = QVBoxLayout(info_card)
-        il.setContentsMargins(20, 16, 20, 16)
-        il.setSpacing(8)
-        it = QLabel("System Info")
+        il.setContentsMargins(24, 20, 24, 20)
+        il.setSpacing(12)
+        it = QLabel("Информация о системе")
         it.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
-        it.setStyleSheet(f"color:{Theme.TEXT};background:transparent;")
+        it.setStyleSheet(f"color:{T.AH};background:transparent;")
         il.addWidget(it)
         self.info_lbl = QLabel()
-        self.info_lbl.setStyleSheet(f"color:{Theme.TEXT_DIM};font-family:Consolas;font-size:11px;background:transparent;")
+        self.info_lbl.setStyleSheet(f"color:{T.TD};font-family:'Consolas',monospace;font-size:12px;background:transparent;")
         self.info_lbl.setWordWrap(True)
         il.addWidget(self.info_lbl)
         grid.addWidget(info_card, 1, 0, 1, 3)
         lay.addLayout(grid)
         lay.addStretch()
-        self._last_info = 0
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._update)
-        self._timer.start(1500)
-        self._update()
 
-    def _metric(self, name):
-        card = GlassCard()
-        card.setMinimumHeight(120)
+        self._last_info = 0
+        t = QTimer(self)
+        t.timeout.connect(self._upd)
+        t.start(1500)
+        self._upd()
+
+    def _m(self, name):
+        card = Card()
+        card.setMinimumHeight(140)
         cl = QVBoxLayout(card)
-        cl.setContentsMargins(18, 14, 18, 14)
-        cl.setSpacing(6)
-        t = QLabel(name)
-        t.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
-        t.setStyleSheet(f"color:{Theme.TEXT_DIM};background:transparent;")
-        cl.addWidget(t)
+        cl.setContentsMargins(20, 16, 20, 16)
+        cl.setSpacing(2)
+        nm = QLabel(name)
+        nm.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        nm.setStyleSheet(f"color:{T.TM};background:transparent;")
+        cl.addWidget(nm)
         v = QLabel("0%")
-        v.setFont(QFont("Segoe UI", 28, QFont.Weight.Bold))
-        v.setStyleSheet(f"color:{Theme.ACCENT_LIGHT};background:transparent;")
+        v.setFont(QFont("Segoe UI", 32, QFont.Weight.Bold))
+        v.setStyleSheet(f"color:{T.AH};background:transparent;")
         cl.addWidget(v)
+        d = QLabel("")
+        d.setStyleSheet(f"color:{T.TD};font-size:11px;background:transparent;")
+        cl.addWidget(d)
         bar = QProgressBar()
         bar.setRange(0, 100)
         bar.setValue(0)
         bar.setTextVisible(False)
-        bar.setFixedHeight(5)
-        bar.setStyleSheet(f"QProgressBar{{background:{Theme.CARD_HOVER};border:none;border-radius:2px;}}QProgressBar::chunk{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {Theme.ACCENT},stop:1 {Theme.ACCENT_LIGHT});border-radius:2px;}}")
+        bar.setFixedHeight(6)
+        bar.setStyleSheet(f"QProgressBar{{background:{T.CD};border:none;border-radius:3px;}}QProgressBar::chunk{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {T.A},stop:1 {T.AH});border-radius:3px;}}")
         cl.addWidget(bar)
-        return card, v, bar
+        return (card, v, d), bar, d
 
-    def _update(self):
+    def _upd(self):
         try:
             cpu = psutil.cpu_percent(interval=0)
-            self.cpu_val.setText(f"{cpu:.0f}%")
+            self.cpu_v[1].setText(f"{cpu:.0f}%")
             self.cpu_bar.setValue(int(cpu))
+            self.cpu_d.setText(f"{psutil.cpu_count(logical=True)} потоков")
+
             ram = psutil.virtual_memory()
-            self.ram_val.setText(f"{ram.percent:.0f}%")
+            self.ram_v[1].setText(f"{ram.percent:.0f}%")
             self.ram_bar.setValue(int(ram.percent))
-            disk = psutil.disk_usage("/")
-            self.disk_val.setText(f"{disk.percent:.0f}%")
+            self.ram_d.setText(f"{(ram.total - ram.available) / 1024**3:.1f} / {ram.total / 1024**3:.1f} GB")
+
+            disk = psutil.disk_usage("C:\\")
+            self.disk_v[1].setText(f"{disk.percent:.0f}%")
             self.disk_bar.setValue(int(disk.percent))
+            self.disk_d.setText(f"{disk.used / 1024**3:.0f} / {disk.total / 1024**3:.0f} GB")
+
             now = time.time()
             if now - self._last_info > 30:
                 self._last_info = now
-                info = f"OS: {platform.system()} {platform.release()}\n"
-                info += f"CPU: {platform.processor()[:50]}\n"
-                info += f"RAM: {ram.total / (1024**3):.1f} GB ({ram.available / (1024**3):.1f} free)\n"
-                info += f"Cores: {psutil.cpu_count(logical=False)} phys / {psutil.cpu_count(logical=True)} logical"
-                self.info_lbl.setText(info)
+                u = platform.uname()
+                freq = psutil.cpu_freq()
+                freq_s = f" @ {freq.current:.0f} MHz" if freq else ""
+                info = [
+                    f"OS:       {u.system} {u.release}",
+                    f"Машина:   {u.machine}",
+                    f"CPU:      {(u.processor or 'N/A')[:55]}{freq_s}",
+                    f"Ядра:     {psutil.cpu_count(logical=False)} физ / {psutil.cpu_count(logical=True)} лог",
+                    f"RAM:      {ram.total / 1024**3:.1f} GB",
+                    f"Swap:     {psutil.swap_memory().total / 1024**3:.1f} GB",
+                    f"Диск C:\\: {disk.total / 1024**3:.0f} GB",
+                    f"Python:   {platform.python_version()}",
+                ]
+                self.info_lbl.setText("\n".join(info))
         except Exception:
             pass
 
-# === 14. CONTACTS ===
-
 
 class ContactsPanel(QFrame):
-    def __init__(self, config, parent=None):
+    def __init__(self, cfg, parent=None):
         super().__init__(parent)
-        contacts = config.get("contacts", {})
+        contacts = cfg.get("contacts", {})
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(50, 36, 50, 36)
+        lay.setContentsMargins(50, 40, 50, 40)
         lay.setSpacing(16)
-        title = QLabel("Contacts")
-        title.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
-        title.setStyleSheet(f"color:{Theme.TEXT};background:transparent;")
-        lay.addWidget(title)
+        t = QLabel("Контакты")
+        t.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
+        t.setStyleSheet(f"color:{T.TX};background:transparent;")
+        lay.addWidget(t)
         for icon, name, val, url in [
-            ("\u2708\uFE0F", "Telegram", contacts.get("telegram", "@CayPlay78"), f"https://t.me/{contacts.get('telegram', '@CayPlay78').lstrip('@')}"),
-            ("\U0001F535", "VKontakte", contacts.get("vk", "https://m.vk.com/cayplay"), contacts.get("vk", "https://m.vk.com/cayplay")),
+            ("✈", "Telegram", contacts.get("telegram", "@CayPlay78"), f"https://t.me/{contacts.get('telegram', '@CayPlay78').lstrip('@')}"),
+            ("●", "VKontakte", contacts.get("vk", "https://m.vk.com/cayplay"), contacts.get("vk", "https://m.vk.com/cayplay")),
         ]:
-            card = GlassCard()
+            card = Card()
             card.setFixedHeight(80)
             cl = QHBoxLayout(card)
             cl.setContentsMargins(22, 16, 22, 16)
             ic = QLabel(icon)
-            ic.setFont(QFont("Segoe UI Emoji", 26))
+            ic.setFont(QFont("Segoe UI Emoji", 24))
             ic.setStyleSheet("background:transparent;")
             cl.addWidget(ic)
             info = QVBoxLayout()
             info.setSpacing(2)
             lbl = QLabel(name)
             lbl.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
-            lbl.setStyleSheet(f"color:{Theme.TEXT};background:transparent;")
+            lbl.setStyleSheet(f"color:{T.TX};background:transparent;")
             info.addWidget(lbl)
             vl = QLabel(val)
-            vl.setFont(QFont("Consolas", 12))
-            vl.setStyleSheet(f"color:{Theme.ACCENT_LIGHT};background:transparent;")
+            vl.setFont(QFont("Consolas", 11))
+            vl.setStyleSheet(f"color:{T.AH};background:transparent;")
             info.addWidget(vl)
             cl.addLayout(info)
             cl.addStretch()
-            copy = GlowButton("Copy")
-            copy.setFixedWidth(60)
-            copy.clicked.connect(lambda v=val: self._copy(v))
+            copy = Btn("Копировать")
+            copy.setFixedWidth(100)
+            copy.clicked.connect(lambda v=val: QApplication.clipboard().setText(v))
             cl.addWidget(copy)
-            open_ = GlowButton("Open", accent=True)
-            open_.setFixedWidth(60)
+            open_ = Btn("Открыть", accent=True)
+            open_.setFixedWidth(100)
             open_.clicked.connect(lambda u=url: QDesktopServices.openUrl(QUrl(u)))
             cl.addWidget(open_)
             lay.addWidget(card)
         lay.addStretch()
-
-    def _copy(self, text):
-        QApplication.clipboard().setText(text)
-
-# === 15. SETTINGS ===
-
-
-class SettingsPanel(QFrame):
-    def __init__(self, config, parent=None):
-        super().__init__(parent)
-        self.cfg = config
-        self._parent = parent
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(36, 28, 36, 28)
-        lay.setSpacing(16)
-        title = QLabel("Settings")
-        title.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
-        title.setStyleSheet(f"color:{Theme.TEXT};background:transparent;")
-        lay.addWidget(title)
-        # AI Provider section
-        ai_card = GlassCard()
-        al = QVBoxLayout(ai_card)
-        al.setContentsMargins(20, 16, 20, 16)
-        al.setSpacing(10)
-        al.addWidget(self._section_label("AI Provider"))
-        # Provider toggle
-        prov_row = QHBoxLayout()
-        prov_row.setSpacing(10)
-        self.or_btn = GlowButton("OpenRouter (Cloud)", accent=True)
-        self.or_btn.clicked.connect(lambda: self._set_provider("openrouter"))
-        prov_row.addWidget(self.or_btn)
-        self.oll_btn = GlowButton("Ollama (Local)")
-        self.oll_btn.clicked.connect(lambda: self._set_provider("ollama"))
-        prov_row.addWidget(self.oll_btn)
-        prov_row.addStretch()
-        al.addLayout(prov_row)
-        # OpenRouter section
-        or_frame = QFrame()
-        or_frame.setStyleSheet(f"QFrame{{background:{Theme.CARD};border-radius:10px;padding:12px;}}")
-        or_lay = QVBoxLayout(or_frame)
-        or_lay.setSpacing(8)
-        or_lay.addWidget(self._label("OpenRouter API Key"))
-        key_row = QHBoxLayout()
-        self.api_input = QLineEdit()
-        self.api_input.setPlaceholderText("sk-or-...")
-        self.api_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api_input.setText(config.get("openrouter", {}).get("api_key", ""))
-        self.api_input.setStyleSheet(f"QLineEdit{{background:{Theme.INPUT};border:1px solid {Theme.BORDER};border-radius:8px;padding:8px 12px;color:white;font-family:Consolas;font-size:12px;}}QLineEdit:focus{{border-color:{Theme.ACCENT};}}")
-        self.api_input.textChanged.connect(self._on_key_change)
-        key_row.addWidget(self.api_input, 1)
-        show_btn = QPushButton("Show")
-        show_btn.setFixedWidth(55)
-        show_btn.setStyleSheet(f"QPushButton{{background:{Theme.CARD_HOVER};color:{Theme.TEXT_DIM};border:none;border-radius:6px;font-size:11px;}}QPushButton:hover{{color:white;}}")
-        show_btn.clicked.connect(self._toggle_key)
-        key_row.addWidget(show_btn)
-        or_lay.addLayout(key_row)
-        or_lay.addWidget(self._label("Model"))
-        self.or_model_combo = QComboBox()
-        self.or_model_combo.addItems([
-            "google/gemini-2.0-flash-001",
-            "anthropic/claude-3.5-sonnet",
-            "openai/gpt-4o-mini",
-            "meta-llama/llama-3.3-70b-instruct",
-            "deepseek/deepseek-chat-v3-0324",
-            "qwen/qwen3-30b-a3b",
-        ])
-        self.or_model_combo.setCurrentText(config.get("openrouter", {}).get("model", "google/gemini-2.0-flash-001"))
-        self.or_model_combo.setStyleSheet(f"QComboBox{{background:{Theme.INPUT};border:1px solid {Theme.BORDER};border-radius:8px;padding:8px 12px;color:white;font-family:Consolas;font-size:12px;min-width:200px;}}QComboBox::drop-down{{border:none;}}QComboBox QAbstractItemView{{background:{Theme.SURFACE};color:white;selection-background-color:{Theme.ACCENT};border:1px solid {Theme.BORDER};}}")
-        self.or_model_combo.currentTextChanged.connect(self._on_or_model)
-        or_lay.addWidget(self.or_model_combo)
-        al.addWidget(or_frame)
-        # Ollama section
-        oll_frame = QFrame()
-        oll_frame.setStyleSheet(f"QFrame{{background:{Theme.CARD};border-radius:10px;padding:12px;}}")
-        oll_lay = QVBoxLayout(oll_frame)
-        oll_lay.setSpacing(8)
-        oll_lay.addWidget(self._label("Ollama Model"))
-        self.oll_combo = QComboBox()
-        self.oll_combo.addItems(["qwen3:0.6b", "qwen3:1.7b", "qwen3:4b", "qwen3:8b", "qwen2.5:1.5b", "qwen2.5:3b", "llama3.2:3b"])
-        self.oll_combo.setCurrentText(config.get("ollama", {}).get("model", "qwen3:1.7b"))
-        self.oll_combo.setStyleSheet(self.or_model_combo.styleSheet())
-        self.oll_combo.currentTextChanged.connect(self._on_oll_model)
-        oll_lay.addWidget(self.oll_combo)
-        dl = GlowButton("Download Model")
-        dl.clicked.connect(self._download)
-        oll_lay.addWidget(dl)
-        al.addWidget(oll_frame)
-        # Status
-        self.status_lbl = QLabel("")
-        self.status_lbl.setStyleSheet(f"color:{Theme.TEXT_DIM};font-family:Consolas;font-size:11px;background:transparent;")
-        al.addWidget(self.status_lbl)
-        lay.addWidget(ai_card)
-        # Actions
-        act_card = GlassCard()
-        act_lay = QVBoxLayout(act_card)
-        act_lay.setContentsMargins(20, 16, 20, 16)
-        act_lay.setSpacing(8)
-        act_lay.addWidget(self._section_label("Actions"))
-        refresh = GlowButton("Refresh Status")
-        refresh.clicked.connect(self._refresh)
-        act_lay.addWidget(refresh)
-        clear = GlowButton("Clear AI History")
-        clear.clicked.connect(self._clear_ai)
-        act_lay.addWidget(clear)
-        lay.addWidget(act_card)
-        lay.addStretch()
-        self._update_provider_ui()
-
-    def _section_label(self, text):
-        l = QLabel(text)
-        l.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
-        l.setStyleSheet(f"color:{Theme.TEXT};background:transparent;")
-        return l
-
-    def _label(self, text):
-        l = QLabel(text)
-        l.setStyleSheet(f"color:{Theme.TEXT_DIM};font-size:12px;background:transparent;")
-        return l
-
-    def _set_provider(self, p):
-        self.cfg["ai_provider"] = p
-        save_config(self.cfg)
-        if hasattr(self._parent, "_ai"):
-            self._parent._ai.set_provider(p)
-        self._update_provider_ui()
-
-    def _update_provider_ui(self):
-        p = self.cfg.get("ai_provider", "openrouter")
-        self.or_btn.setStyleSheet(f"QPushButton{{background:{Theme.ACCENT if p=='openrouter' else Theme.CARD_HOVER};color:{'white' if p=='openrouter' else Theme.TEXT};border:none;border-radius:10px;padding:10px 18px;font-family:'Segoe UI';font-size:13px;}}")
-        self.oll_btn.setStyleSheet(f"QPushButton{{background:{Theme.ACCENT if p=='ollama' else Theme.CARD_HOVER};color:{'white' if p=='ollama' else Theme.TEXT};border:none;border-radius:10px;padding:10px 18px;font-family:'Segoe UI';font-size:13px;}}")
-        self._update_status()
-
-    def _on_key_change(self, key):
-        self.cfg.setdefault("openrouter", {})["api_key"] = key
-        save_config(self.cfg)
-        if hasattr(self._parent, "_ai"):
-            self._parent._ai.set_api_key(key)
-        self._update_status()
-
-    def _on_or_model(self, model):
-        self.cfg.setdefault("openrouter", {})["model"] = model
-        save_config(self.cfg)
-        if hasattr(self._parent, "_ai"):
-            self._parent._ai.set_or_model(model)
-
-    def _on_oll_model(self, model):
-        self.cfg.setdefault("ollama", {})["model"] = model
-        save_config(self.cfg)
-        if hasattr(self._parent, "_ai"):
-            self._parent._ai.set_oll_model(model)
-
-    def _toggle_key(self):
-        mode = self.api_input.echoMode()
-        self.api_input.setEchoMode(QLineEdit.EchoMode.Normal if mode == QLineEdit.EchoMode.Password else QLineEdit.EchoMode.Password)
-
-    def _update_status(self):
-        p = self.cfg.get("ai_provider", "openrouter")
-        if p == "openrouter":
-            ok = bool(self.api_input.text().strip())
-            self.status_lbl.setText(f"{'OK - Cloud AI ready' if ok else 'No API key provided'}")
-            self.status_lbl.setStyleSheet(f"color:{Theme.SUCCESS if ok else Theme.WARNING};font-family:Consolas;font-size:11px;background:transparent;")
-        else:
-            ok = hasattr(self._parent, "_ai") and self._parent._ai.oll_available if hasattr(self._parent, "_ai") else False
-            self.status_lbl.setText(f"{'OK - Ollama online' if ok else 'Checking Ollama...'}")
-            self.status_lbl.setStyleSheet(f"color:{Theme.SUCCESS if ok else Theme.WARNING};font-family:Consolas;font-size:11px;background:transparent;")
-
-    def _refresh(self):
-        if hasattr(self._parent, "_ai"):
-            self._parent._ai.check_ollama_async()
-        QTimer.singleShot(1500, self._update_status)
-
-    def _clear_ai(self):
-        if hasattr(self._parent, "_ai"):
-            self._parent._ai.clear()
-
-    def _download(self):
-        model = self.oll_combo.currentText()
-        def _run():
-            try:
-                flags = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
-                p = subprocess.Popen(["ollama", "pull", model], stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=flags)
-                p.communicate(timeout=600)
-            except Exception:
-                pass
-        threading.Thread(target=_run, daemon=True).start()
-
-# === 16. ABOUT ===
 
 
 class AboutPanel(QFrame):
@@ -1893,41 +1254,41 @@ class AboutPanel(QFrame):
         super().__init__(parent)
         lay = QVBoxLayout(self)
         lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        card = GlassCard()
-        card.setMaximumWidth(560)
+        card = Card()
+        card.setMaximumWidth(520)
         cl = QVBoxLayout(card)
         cl.setContentsMargins(44, 36, 44, 36)
         cl.setSpacing(12)
         cl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         logo = QLabel("M")
         logo.setFont(QFont("Segoe UI", 48, QFont.Weight.Bold))
-        logo.setStyleSheet(f"color:{Theme.ACCENT};background:transparent;")
+        logo.setStyleSheet(f"color:{T.A};background:transparent;")
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cl.addWidget(logo)
-        v = QLabel("Version 13.0 AURORA")
-        v.setFont(QFont("Consolas", 12))
-        v.setStyleSheet(f"color:{Theme.ACCENT_LIGHT};background:transparent;")
+        v = QLabel("MIRA v2.0")
+        v.setFont(QFont("Consolas", 13))
+        v.setStyleSheet(f"color:{T.AH};background:transparent;")
         v.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cl.addWidget(v)
-        d = QLabel("AI Assistant for your PC.\nVoice, text, scripts, search, system monitor.")
+        d = QLabel("ИИ-ассистент для вашего ПК.\nГолос, текст, сценарии, поиск, мониторинг системы.")
         d.setFont(QFont("Segoe UI", 13))
-        d.setStyleSheet(f"color:{Theme.TEXT_DIM};background:transparent;")
+        d.setStyleSheet(f"color:{T.TD};background:transparent;")
         d.setAlignment(Qt.AlignmentFlag.AlignCenter)
         d.setWordWrap(True)
         cl.addWidget(d)
         cl.addSpacing(8)
         c = QLabel("(c) CayPlay 2026")
         c.setFont(QFont("Segoe UI", 11))
-        c.setStyleSheet(f"color:{Theme.TEXT_MUTED};background:transparent;")
+        c.setStyleSheet(f"color:{T.TM};background:transparent;")
         c.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cl.addWidget(c)
         btns = QHBoxLayout()
         btns.setSpacing(10)
         btns.addStretch()
-        gh = GlowButton("GitHub")
+        gh = Btn("GitHub")
         gh.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com")))
         btns.addWidget(gh)
-        tg = GlowButton("Telegram", accent=True)
+        tg = Btn("Telegram", accent=True)
         tg.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://t.me/CayPlay78")))
         btns.addWidget(tg)
         btns.addStretch()
@@ -1938,36 +1299,10 @@ class AboutPanel(QFrame):
         wrap.addStretch()
         lay.addLayout(wrap)
 
-# === 17. TOAST ===
 
-
-class Toast(QFrame):
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.setStyleSheet(f"QFrame{{background:{Theme.ACCENT};border-radius:12px;padding:12px 20px;color:white;font-family:'Segoe UI';font-size:13px;}}")
-        self.hide()
-        self._timer = QTimer(self)
-        self._timer.setSingleShot(True)
-        self._timer.timeout.connect(self.hide)
-
-    def show_message(self, text, duration=2500):
-        for ch in self.findChildren(QLabel):
-            ch.deleteLater()
-        lay = self.layout() or QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lbl = QLabel(text)
-        lbl.setStyleSheet("color:white;background:transparent;")
-        lbl.setWordWrap(True)
-        lay.addWidget(lbl)
-        self.adjustSize()
-        if self.parent():
-            pw = self.parent().width()
-            self.move((pw - self.width()) // 2, self.parent().height() - self.height() - 50)
-        self.show()
-        self.raise_()
-        self._timer.start(duration)
-
-# === 18. MAIN WINDOW ===
+# ══════════════════════════════════════════════════════════════
+# MAIN WINDOW
+# ══════════════════════════════════════════════════════════════
 
 
 class MIRAWindow(QMainWindow):
@@ -1976,10 +1311,10 @@ class MIRAWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.cfg = load_config()
-        self._executor = SystemExecutor(self.cfg)
-        self._ai = AIManager(self.cfg)
-        self._voice = VoiceManager(self.cfg)
-        self._classifier = IntentClassifier(self.cfg)
+        self._exec = Executor(self.cfg)
+        self._ai = AI(self.cfg)
+        self._voice = Voice(self.cfg)
+        self._nlp = NLP(self.cfg)
         self.voice_signal.connect(self._on_voice)
         self.active_threads = []
         self._script_worker = None
@@ -1989,97 +1324,221 @@ class MIRAWindow(QMainWindow):
         QTimer.singleShot(100, self._boot)
 
     def _setup_ui(self):
-        self.setWindowTitle("MIRA - AI Assistant")
+        self.setWindowTitle("MIRA v2.0")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         central = QWidget()
         self.setCentralWidget(central)
-        central.setStyleSheet(f"background:{Theme.BG};")
+        central.setStyleSheet(f"background:{T.BG};")
         root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        self.title_bar = TitleBar(self)
+
+        self.title_bar = self._make_titlebar()
         root.addWidget(self.title_bar)
+
         content = QHBoxLayout()
         content.setContentsMargins(0, 0, 0, 0)
         content.setSpacing(0)
-        self.sidebar = Sidebar()
-        self.sidebar.nav_changed.connect(self._switch_page)
+
+        self.sidebar = self._make_sidebar()
         content.addWidget(self.sidebar)
+
         self.stacked = QStackedWidget()
-        self.stacked.setStyleSheet(f"background:{Theme.BG};")
+        self.stacked.setStyleSheet(f"background:{T.BG};")
+
         self.chat_panel = ChatPanel()
         self.chat_panel.send_btn.clicked.connect(self._process)
         self.chat_panel.inp.returnPressed.connect(self._process)
         self.chat_panel.voice_btn.clicked.connect(self._toggle_voice)
         self.stacked.addWidget(self.chat_panel)
-        self.script_panel = ScriptPanel(self.cfg)
-        self.script_panel.run_signal.connect(self._run_script)
-        self.script_panel.create_signal.connect(lambda: self._create_script_dialog())
-        self.script_panel.edit_signal.connect(self._edit_script)
-        self.stacked.addWidget(self.script_panel)
+
+        self.scripts_panel = ScriptsPanel(self.cfg)
+        self.scripts_panel.run_signal.connect(self._run_script)
+        self.scripts_panel.create_signal.connect(lambda: self._edit_script(None))
+        self.scripts_panel.edit_signal.connect(self._edit_script)
+        self.stacked.addWidget(self.scripts_panel)
+
         self.notes_panel = NotesPanel(self.cfg)
         self.stacked.addWidget(self.notes_panel)
-        self.system_panel = SystemMonitorPanel()
-        self.stacked.addWidget(self.system_panel)
+
+        self.sys_panel = SystemPanel()
+        self.stacked.addWidget(self.sys_panel)
+
         self.contacts_panel = ContactsPanel(self.cfg)
         self.stacked.addWidget(self.contacts_panel)
+
         self.settings_panel = SettingsPanel(self.cfg, self)
         self.stacked.addWidget(self.settings_panel)
+
         self.about_panel = AboutPanel()
         self.stacked.addWidget(self.about_panel)
+
         content.addWidget(self.stacked, 1)
         cw = QWidget()
         cw.setLayout(content)
         root.addWidget(cw, 1)
-        self._toast = Toast(self)
+
+    def _make_titlebar(self):
+        tb = QFrame()
+        tb.setFixedHeight(44)
+        tb.setStyleSheet(f"QFrame{{background:{T.SF};border-bottom:1px solid {T.BD};}}")
+        lay = QHBoxLayout(tb)
+        lay.setContentsMargins(240, 0, 12, 0)
+        lay.setSpacing(12)
+        self.page_icon = QLabel("💬")
+        self.page_icon.setStyleSheet("background:transparent;")
+        lay.addWidget(self.page_icon)
+        self.page_lbl = QLabel("Чат")
+        self.page_lbl.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
+        self.page_lbl.setStyleSheet(f"color:{T.TX};background:transparent;")
+        lay.addWidget(self.page_lbl)
+        lay.addStretch()
+        for txt, func, color in [("—", self.showMinimized, T.TD), ("□", self._toggle_max, T.TD), ("✕", self.close, T.ER)]:
+            b = QPushButton(txt)
+            b.setFixedSize(36, 30)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(f"QPushButton{{background:transparent;color:{color};border:none;font-size:14px;border-radius:6px;}}QPushButton:hover{{background:{T.CH};}}")
+            b.clicked.connect(func)
+            lay.addWidget(b)
+        return tb
+
+    def _make_sidebar(self):
+        sb = QFrame()
+        sb.setObjectName("sidebar")
+        sb.setFixedWidth(220)
+        sb.setStyleSheet(f"#sidebar{{background:{T.SF};border-right:1px solid {T.BD};}}")
+        lay = QVBoxLayout(sb)
+        lay.setContentsMargins(12, 16, 12, 12)
+        lay.setSpacing(0)
+
+        logo_row = QHBoxLayout()
+        logo_row.setContentsMargins(12, 8, 12, 24)
+        logo_row.setSpacing(10)
+        dot = QLabel()
+        dot.setFixedSize(32, 32)
+        dot.setStyleSheet(f"QLabel{{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 {T.A},stop:1 {T.AH});border-radius:8px;}}")
+        dot_t = QLabel("M")
+        dot_t.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        dot_t.setStyleSheet("color:white;background:transparent;")
+        dot_t.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        dl = QVBoxLayout(dot)
+        dl.setContentsMargins(0, 0, 0, 0)
+        dl.addWidget(dot_t)
+        logo_row.addWidget(dot)
+        nm = QLabel("MIRA")
+        nm.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        nm.setStyleSheet(f"color:{T.TX};background:transparent;")
+        logo_row.addWidget(nm)
+        logo_row.addStretch()
+        lay.addLayout(logo_row)
+
+        self.nav_btns = {}
+        items = [
+            ("chat",     "💬", "Чат"),
+            ("scripts",  "🎬", "Сценарии"),
+            ("notes",    "📝", "Заметки"),
+            ("system",   "📊", "Система"),
+            ("contacts", "📌", "Контакты"),
+            ("settings", "⚙", "Настройки"),
+            ("about",    "ℹ", "О приложении"),
+        ]
+        for nid, icon, label in items:
+            btn = QToolButton()
+            btn.setText(f"  {icon}  {label}")
+            btn.setProperty("nav_id", nid)
+            btn.setFixedHeight(40)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(f"""
+                QToolButton{{background:transparent;color:{T.TD};border:none;border-radius:8px;font-size:13px;font-family:'Segoe UI';text-align:left;padding:0px 12px;}}
+                QToolButton:hover{{background:{T.CH};color:{T.TX};}}
+                QToolButton:checked{{background:{T.A};color:white;font-weight:600;}}
+            """)
+            btn.setCheckable(True)
+            btn.clicked.connect(self._on_nav)
+            lay.addWidget(btn)
+            self.nav_btns[nid] = btn
+
+        self.nav_btns["chat"].setChecked(True)
+        lay.addStretch()
+
+        sr = QHBoxLayout()
+        sr.setContentsMargins(14, 0, 14, 4)
+        sr.setSpacing(6)
+        self.sidebar_dot = Pulse(size=6, color=T.OK)
+        self.sidebar_dot.set_on(True)
+        sr.addWidget(self.sidebar_dot)
+        sl = QLabel("Online")
+        sl.setStyleSheet(f"color:{T.OK};font-size:11px;font-weight:500;background:transparent;")
+        sr.addWidget(sl)
+        sr.addStretch()
+        lay.addLayout(sr)
+        return sb
+
+    def _on_nav(self):
+        btn = self.sender()
+        nid = btn.property("nav_id")
+        pages = {
+            "chat": (self.chat_panel, "Чат", "💬"),
+            "scripts": (self.scripts_panel, "Сценарии", "🎬"),
+            "notes": (self.notes_panel, "Заметки", "📝"),
+            "system": (self.sys_panel, "Система", "📊"),
+            "contacts": (self.contacts_panel, "Контакты", "📌"),
+            "settings": (self.settings_panel, "Настройки", "⚙"),
+            "about": (self.about_panel, "О приложении", "ℹ"),
+        }
+        for k, b in self.nav_btns.items():
+            b.setChecked(k == nid)
+        if nid in pages:
+            panel, title, icon = pages[nid]
+            self.stacked.setCurrentWidget(panel)
+            self.page_lbl.setText(title)
+            self.page_icon.setText(icon)
 
     def _setup_hotkeys(self):
-        from PyQt6.QtGui import QShortcut, QKeySequence
         def _ghk():
             try:
                 import keyboard
-                hk = self.cfg.get("hotkey", "ctrl+shift+m")
-                keyboard.add_hotkey(hk, self._restore_window)
+                keyboard.add_hotkey(self.cfg.get("hotkey", "ctrl+shift+m"), self._restore)
             except Exception:
                 pass
         threading.Thread(target=_ghk, daemon=True).start()
-        for i, page in enumerate(["chat", "scripts", "notes", "system", "contacts", "settings", "about"], 1):
-            QShortcut(QKeySequence(f"Ctrl+{i}"), self, lambda p=page: self.sidebar.select(p))
+        for i, p in enumerate(["chat", "scripts", "notes", "system", "contacts", "settings", "about"], 1):
+            QShortcut(QKeySequence(f"Ctrl+{i}"), self, lambda p=p: self.nav_btns[p].click())
         QShortcut(QKeySequence("Ctrl+Q"), self, self._full_exit)
         QShortcut(QKeySequence("Ctrl+L"), self, self._clear_chat)
         QShortcut(QKeySequence("Ctrl+Space"), self, self._toggle_voice)
-        QShortcut(QKeySequence("F11"), self, self._toggle_maximize)
+        QShortcut(QKeySequence("F11"), self, self._toggle_max)
 
     def _init_tray(self):
         px = QPixmap(64, 64)
         px.fill(Qt.GlobalColor.transparent)
         p = QPainter(px)
-        g = QRadialGradient(32, 32, 32)
-        g.setColorAt(0, QColor(99, 102, 241))
-        g.setColorAt(1, QColor(79, 70, 229))
-        p.setBrush(QBrush(g))
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        g = QRadialGradient(32, 32, 32)
+        g.setColorAt(0, QColor(108, 92, 231))
+        g.setColorAt(1, QColor(90, 75, 209))
+        p.setBrush(QBrush(g))
         p.drawRoundedRect(2, 2, 60, 60, 14, 14)
         p.setPen(Qt.GlobalColor.white)
         p.setFont(QFont("Segoe UI", 26, QFont.Weight.Bold))
         p.drawText(px.rect(), Qt.AlignmentFlag.AlignCenter, "M")
         p.end()
         self.tray = QSystemTrayIcon(QIcon(px), self)
-        self.tray.setToolTip("MIRA v13.0")
+        self.tray.setToolTip("MIRA v2.0")
         m = QMenu()
-        m.setStyleSheet(f"QMenu{{background:{Theme.SURFACE};color:{Theme.TEXT};border:1px solid {Theme.BORDER};border-radius:8px;padding:6px;}}QMenu::item{{padding:8px 24px;border-radius:6px;}}QMenu::item:selected{{background:{Theme.ACCENT};color:white;}}QMenu::separator{{height:1px;background:{Theme.BORDER};margin:4px 8px;}}")
-        a1 = QAction("Open MIRA", self)
-        a1.triggered.connect(self._restore_window)
+        m.setStyleSheet(f"QMenu{{background:{T.SF};color:{T.TX};border:1px solid {T.BD};border-radius:8px;padding:6px;}}QMenu::item{{padding:8px 24px;border-radius:6px;}}QMenu::item:selected{{background:{T.A};color:white;}}")
+        a1 = QAction("Открыть MIRA", self)
+        a1.triggered.connect(self._restore)
         m.addAction(a1)
         m.addSeparator()
-        a3 = QAction("Exit", self)
+        a3 = QAction("Выход", self)
         a3.triggered.connect(self._full_exit)
         m.addAction(a3)
         self.tray.setContextMenu(m)
-        self.tray.activated.connect(lambda r: self._restore_window() if r == QSystemTrayIcon.ActivationReason.Trigger else None)
+        self.tray.activated.connect(lambda r: self._restore() if r == QSystemTrayIcon.ActivationReason.Trigger else None)
         self.tray.show()
 
-    def _restore_window(self):
+    def _restore(self):
         if self.isMinimized():
             self.showNormal()
         if not self.isVisible():
@@ -2099,115 +1558,40 @@ class MIRAWindow(QMainWindow):
         QApplication.quit()
         sys.exit(0)
 
-    def _toggle_maximize(self):
+    def _toggle_max(self):
         if self.isMaximized():
             self.showNormal()
         else:
             self.showMaximized()
 
-    def _switch_page(self, page, direction="left"):
-        titles = {"chat": "Chat", "scripts": "Scripts", "notes": "Notes", "system": "System", "contacts": "Contacts", "settings": "Settings", "about": "About"}
-        widgets = {"chat": self.chat_panel, "scripts": self.script_panel, "notes": self.notes_panel, "system": self.system_panel, "contacts": self.contacts_panel, "settings": self.settings_panel, "about": self.about_panel}
-        self.stacked.setCurrentWidget(widgets.get(page, self.chat_panel))
-        self.title_bar.set_page(titles.get(page, "MIRA"))
-
     def _boot(self):
-        welcome = """Добро пожаловать в MIRA v13.0 AURORA
-
-Я ваш ИИ-ассистент. Вот что я умею:
-
-  Чат и ИИ
-    - Задайте любой вопрос (облачный ИИ через OpenRouter)
-    - "Привет", "Как дела?", "Что ты умеешь?"
-
-  Приложения и игры
-    - "Открой браузер", "Запусти Steam"
-    - "Открой калькулятор", "Открой VS Code"
-
-  Поиск
-    - "Найди рецепт пасты"
-    - "Что такое Python?", "Кто такой Илон Маск?"
-
-  Система
-    - "Выключи компьютер", "Открой диспетчер задач"
-    - "Сколько будет 25*4?" (калькулятор)
-
-  Сценарии
-    - "Создай сценарий - Утренний распорядок"
-    - "Запусти сценарий - Утренний распорядок"
-
-  Заметки
-    - "Запомни купить молоко"
-    - "Покажи заметки"
-
-  Голос
-    - Нажмите кнопку микрофона или Ctrl+Space
-
-  Горячие клавиши
-    - Ctrl+1-7: Переключение страниц
-    - F11: Полный экран
-    - Ctrl+Q: Выход"""
-        self._add_bubble("ai", welcome)
-        self._ai.check_ollama_async()
-        QTimer.singleShot(300, lambda: self.settings_panel._update_status())
+        self._add("ai", "MIRA v2.0 готова к работе.\n\nЧем могу помочь?")
 
     def _clear_chat(self):
         self.chat_panel.chat.clear()
-        self._add_bubble("ai", "Chat cleared.")
+        self._add("ai", "Чат очищен.")
 
-    def _cleanup_thread(self, t):
+    def _cleanup(self, t):
         if t in self.active_threads:
             self.active_threads.remove(t)
         t.deleteLater()
 
-    def _start_worker(self, w):
-        w.finished.connect(lambda: self._cleanup_thread(w))
+    def _start(self, w):
+        w.finished.connect(lambda: self._cleanup(w))
         self.active_threads.append(w)
         w.start()
 
-    def _add_bubble(self, role, text):
-        colors = {"user": Theme.INFO, "ai": Theme.SUCCESS, "sys": Theme.WARNING, "success": Theme.SUCCESS, "error": Theme.ERROR}
-        align = "right" if role == "user" else "left"
-        bg_map = {
-            "user": "rgba(99, 102, 241, 0.12)",
-            "ai": "rgba(34, 197, 94, 0.08)",
-            "sys": "rgba(245, 158, 11, 0.08)",
-            "success": "rgba(34, 197, 94, 0.12)",
-            "error": "rgba(239, 68, 68, 0.12)"
-        }
+    def _add(self, role, text):
+        colors = {"user": T.IF, "ai": T.OK, "sys": T.WR, "success": T.OK, "error": T.ER}
+        bg_map = {"user": f"{T.A}15", "ai": f"{T.OK}10", "sys": f"{T.WR}10", "success": f"{T.OK}18", "error": f"{T.ER}18"}
         bg = bg_map.get(role, bg_map["ai"])
-        c = colors.get(role, Theme.SUCCESS)
+        c = colors.get(role, T.OK)
         safe = text.replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
         ts = datetime.now().strftime("%H:%M")
-
         if role == "user":
-            html = f"""
-            <div style="text-align:right; margin:12px 0;">
-                <div style="background:linear-gradient(135deg, {Theme.ACCENT}18, {Theme.ACCENT}08);
-                            padding:14px 18px; border-radius:16px 16px 4px 16px;
-                            display:inline-block; max-width:75%;
-                            border:1px solid {Theme.ACCENT}30;
-                            box-shadow:0 2px 8px rgba(99,102,241,0.1);">
-                    <div style="color:{Theme.TEXT}; font-size:14px; line-height:1.5;">{safe}</div>
-                    <div style="color:{Theme.TEXT_MUTED}; font-size:10px; margin-top:6px;">{ts}</div>
-                </div>
-            </div>
-            """
+            html = f'<div style="text-align:right;margin:12px 0;"><div style="background:{T.A}12;padding:14px 18px;border-radius:16px 16px 4px 16px;display:inline-block;max-width:75%;border:1px solid {T.A}30;"><div style="color:{T.TX};font-size:14px;line-height:1.5;">{safe}</div><div style="color:{T.TM};font-size:10px;margin-top:6px;">{ts}</div></div></div>'
         else:
-            html = f"""
-            <div style="text-align:left; margin:12px 0;">
-                <div style="background:{bg};
-                            padding:14px 18px; border-radius:16px 16px 16px 4px;
-                            display:inline-block; max-width:75%;
-                            border:1px solid {c}25;
-                            box-shadow:0 2px 8px rgba(0,0,0,0.1);">
-                    <div style="font-size:10px; color:{c}; font-weight:600; letter-spacing:1px; margin-bottom:6px;">{role.upper()}</div>
-                    <div style="color:{Theme.TEXT}; font-size:14px; line-height:1.5;">{safe}</div>
-                    <div style="color:{Theme.TEXT_MUTED}; font-size:10px; margin-top:6px;">{ts}</div>
-                </div>
-            </div>
-            """
-
+            html = f'<div style="text-align:left;margin:12px 0;"><div style="background:{bg};padding:14px 18px;border-radius:16px 16px 16px 4px;display:inline-block;max-width:75%;border:1px solid {c}25;"><div style="font-size:10px;color:{c};font-weight:600;letter-spacing:1px;margin-bottom:6px;">{role.upper()}</div><div style="color:{T.TX};font-size:14px;line-height:1.5;">{safe}</div><div style="color:{T.TM};font-size:10px;margin-top:6px;">{ts}</div></div></div>'
         self.chat_panel.chat.append(html)
         sb = self.chat_panel.chat.verticalScrollBar()
         sb.setValue(sb.maximum())
@@ -2217,122 +1601,117 @@ class MIRAWindow(QMainWindow):
         if not txt:
             return
         self.chat_panel.inp.clear()
-        self._add_bubble("user", txt)
+        self._add("user", txt)
         QTimer.singleShot(10, lambda: self._route(txt))
 
     def _route(self, text):
         try:
-            intent, data = self._classifier.classify(text)
+            intent, data = self._nlp.classify(text)
             if intent == "system_cmd":
-                self._add_bubble("sys", f"Running: {data['trigger']}")
-                self._execute_cmd(data["action"], data["type"])
+                self._add("sys", f"Выполняю: {data['trigger']}")
+                self._exec_cmd(data["action"], data["type"])
             elif intent == "search_web":
-                q = data.get('query') or data.get('match', '')
-                # Clean filler phrases from search query
-                q = re.sub(r"\b(в\s+браузере|в\s+интернете|онлайн|в\s+гугле|в\s+яндексе|в\s+поиске)\b", "", q, flags=re.IGNORECASE)
+                q = re.sub(r"\b(в\s+браузере|в\s+интернете|онлайн)\b", "", data.get("query", ""), flags=re.IGNORECASE)
                 q = " ".join(q.split()).strip()
-                self._add_bubble("sys", f"Searching: {q}")
-                self._execute_cmd(f"SEARCH:{q}", "search")
+                self._add("sys", f"Ищу: {q}")
+                self._exec_cmd(f"SEARCH:{q}", "search")
             elif intent == "open_url":
-                self._add_bubble("sys", f"Opening: {data['url']}")
-                self._execute_cmd(f"URL:{data['url']}", "url")
+                self._add("sys", f"Открываю: {data['url']}")
+                self._exec_cmd(f"URL:{data['url']}", "url")
             elif intent == "open_app":
-                self._add_bubble("sys", f"Launching: {data.get('display', data['target'])}")
-                self._execute_cmd(data["target"], "auto")
+                self._add("sys", f"Запускаю: {data.get('display', data['target'])}")
+                self._exec_cmd(data["target"], "auto")
             elif intent == "create_script":
-                self._create_script_dialog(data.get("match", ""))
+                self._edit_script(None, data.get("match", ""))
             elif intent == "run_script":
                 self._run_script(data.get("match", ""))
             elif intent == "list_scripts":
                 scripts = self.cfg.get("scripts", {})
-                msg = "Scripts:\n" + "\n".join(f"- {n} ({len(c)} steps)" for n, c in scripts.items()) if scripts else "No scripts yet."
-                self._add_bubble("ai", msg)
+                msg = "Сценарии:\n" + "\n".join(f"  {n} ({len(c)} шагов)" for n, c in scripts.items()) if scripts else "Сценариев пока нет."
+                self._add("ai", msg)
             elif intent == "time_query":
-                self._add_bubble("ai", f"Time: {datetime.now().strftime('%H:%M:%S')}")
+                self._add("ai", f"Сейчас {datetime.now().strftime('%H:%M:%S')}")
             elif intent == "date_query":
-                months = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                months = ["", "января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]
                 n = datetime.now()
-                self._add_bubble("ai", f"Date: {n.day} {months[n.month]} {n.year}")
+                self._add("ai", f"Сегодня {n.day} {months[n.month]} {n.year}")
             elif intent == "calc":
                 try:
-                    safe = re.sub(r"[^0-9+\-*/().,\s]", "", data.get("expr", "")).replace(",", ".")
+                    expr = data.get("expr", "")
+                    safe = re.sub(r"[^0-9+\-*/().,\s]", "", str(expr)).replace(",", ".")
                     result = eval(safe, {"__builtins__": {}}, {})
-                    self._add_bubble("success", f"{data.get('expr', '')} = {result}")
+                    self._add("success", f"{expr} = {result}")
                 except Exception:
-                    self._add_bubble("error", f"Cannot calculate: {data.get('expr', '')}")
+                    self._add("error", f"Не могу посчитать: {expr}")
             elif intent == "note_save":
                 notes = self.cfg.setdefault("notes", [])
                 notes.insert(0, {"title": data["text"][:40], "text": data["text"], "date": datetime.now().strftime("%d.%m.%Y %H:%M")})
                 save_config(self.cfg)
                 self.notes_panel.refresh()
-                self._add_bubble("success", f"Note saved: {data['text']}")
+                self._add("success", f"Заметка сохранена: {data['text']}")
             elif intent == "note_list":
-                self.sidebar.select("notes")
+                self.nav_btns["notes"].click()
             elif intent == "chat":
-                if "response" in data:
-                    self._add_bubble("ai", data["response"])
-                else:
-                    self._add_bubble("ai", "Thinking...")
-                    w = AIWorker(self._ai, data.get("prompt", text))
-                    w.result.connect(self._on_ai_result)
-                    self._start_worker(w)
+                self._add("ai", data.get("response", ""))
+            elif intent == "ai_chat":
+                self._add("ai", "Думаю...")
+                w = AIWorker(self._ai, data.get("prompt", text))
+                w.result.connect(self._on_ai)
+                self._start(w)
         except Exception as e:
-            self._add_bubble("error", f"Error: {e}")
+            self._add("error", f"Ошибка: {e}")
 
-    def _on_cmd_result(self, result):
+    def _on_cmd(self, result):
         self.chat_panel.set_status("", False)
-        role = "success" if any(w in result for w in ["Запущено", "Открыто", "Steam", "В ", "Готово", "Открываю"]) else ("error" if "Ошибка" in result or "Не найдено" in result else "sys")
-        self._add_bubble(role, result)
+        role = "success" if any(w in result for w in ["Запущено", "Открыто", "Готово", "Открываю", "Поиск"]) else ("error" if "Ошибка" in result or "Не найдено" in result else "sys")
+        self._add(role, result)
 
-    def _on_ai_result(self, result):
+    def _on_ai(self, result):
         self.chat_panel.set_status("", False)
-        self._add_bubble("ai", result)
+        self._add("ai", result)
 
-    def _execute_cmd(self, cmd, ctype):
-        self.chat_panel.set_status("Working...", True)
-        w = CmdWorker(self._executor, cmd, ctype)
-        w.result.connect(self._on_cmd_result)
-        self._start_worker(w)
+    def _exec_cmd(self, cmd, ctype):
+        self.chat_panel.set_status("Выполняю...", True)
+        w = CmdWorker(self._exec, cmd, ctype)
+        w.result.connect(self._on_cmd)
+        self._start(w)
 
     def _run_script(self, name):
         scripts = self.cfg.get("scripts", {})
         if name not in scripts:
-            self._add_bubble("error", f"Script '{name}' not found")
+            self._add("error", f"Сценарий '{name}' не найден")
             return
         cmds = scripts[name]
-        self._add_bubble("ai", f"Running '{name}' ({len(cmds)} steps)...")
-        self._script_worker = ScriptWorker(self._executor, name, cmds)
-        self._script_worker.progress.connect(lambda i, t, c: self._add_bubble("sys", f"Step {i}/{t}: {c}"))
-        self._script_worker.finished.connect(lambda n: self._add_bubble("success", f"Script '{n}' complete!"))
-        self._start_worker(self._script_worker)
-
-    def _create_script_dialog(self, pre_name=""):
-        self._edit_script(None, pre_name)
+        self._add("ai", f"Запускаю '{name}' ({len(cmds)} шагов)...")
+        self._script_worker = ScriptWorker(self._exec, name, cmds)
+        self._script_worker.progress.connect(lambda i, t, c: self._add("sys", f"Шаг {i}/{t}: {c}"))
+        self._script_worker.finished.connect(lambda n: self._add("success", f"Сценарий '{n}' выполнен!"))
+        self._start(self._script_worker)
 
     def _edit_script(self, name=None, pre_name=""):
         dlg = QDialog(self)
-        dlg.setWindowTitle("Script Editor")
+        dlg.setWindowTitle("Редактор сценария")
         dlg.resize(580, 440)
-        dlg.setStyleSheet(f"QDialog{{background:{Theme.SURFACE};color:{Theme.TEXT};}}QLabel{{color:{Theme.ACCENT_LIGHT};font-weight:bold;font-family:'Segoe UI';}}QLineEdit,QPlainTextEdit{{background:{Theme.CARD};border:1px solid {Theme.BORDER};border-radius:8px;padding:10px;color:white;font-family:Consolas;}}QLineEdit:focus,QPlainTextEdit:focus{{border-color:{Theme.ACCENT};}}")
+        dlg.setStyleSheet(f"QDialog{{background:{T.SF};color:{T.TX};}}QLabel{{color:{T.TX};font-weight:bold;}}")
         lay = QVBoxLayout(dlg)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(12)
-        lay.addWidget(QLabel("Name:"))
+        lay.addWidget(QLabel("Название:"))
         name_in = QLineEdit(pre_name)
         if name and name in self.cfg.get("scripts", {}):
             name_in.setText(name)
         lay.addWidget(name_in)
-        lay.addWidget(QLabel("Commands (one per line):"))
+        lay.addWidget(QLabel("Команды (по одной на строку):"))
         cmd_in = QPlainTextEdit()
         if name and name in self.cfg.get("scripts", {}):
             cmd_in.setPlainText("\n".join(self.cfg["scripts"][name]))
         lay.addWidget(cmd_in)
         btns = QHBoxLayout()
         btns.addStretch()
-        cancel = GlowButton("Cancel")
+        cancel = Btn("Отмена")
         cancel.clicked.connect(dlg.reject)
         btns.addWidget(cancel)
-        save = GlowButton("Save", accent=True)
+        save = Btn("Сохранить", accent=True)
         save.clicked.connect(dlg.accept)
         btns.addWidget(save)
         lay.addLayout(btns)
@@ -2345,21 +1724,21 @@ class MIRAWindow(QMainWindow):
                 del self.cfg["scripts"][name]
             self.cfg.setdefault("scripts", {})[nm] = cmds
             save_config(self.cfg)
-            self.script_panel.refresh()
+            self.scripts_panel.refresh()
 
     def _on_voice(self, txt):
         if not txt:
             self.chat_panel.set_status("", False)
             return
-        self._add_bubble("user", f"{txt}")
+        self._add("user", txt)
         QTimer.singleShot(10, lambda: self._route(txt))
         self.chat_panel.set_status("", False)
 
     def _toggle_voice(self):
         if not self._voice.mic:
-            self._add_bubble("error", "Microphone not found")
+            self._add("error", "Микрофон не найден")
             return
-        self.chat_panel.set_status("Listening...", True)
+        self.chat_panel.set_status("Слушаю...", True)
         def listen():
             try:
                 with self._voice.mic as source:
@@ -2373,38 +1752,105 @@ class MIRAWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if hasattr(self, "_toast") and self._toast.isVisible():
-            self._toast.move((self.width() - self._toast.width()) // 2, self.height() - self._toast.height() - 50)
 
     def closeEvent(self, event):
         self.hide()
-        self.tray.showMessage("MIRA", "Minimized to tray.", QSystemTrayIcon.MessageIcon.Information, 2000)
+        self.tray.showMessage("MIRA", "Свернуто в трей.", QSystemTrayIcon.MessageIcon.Information, 2000)
         event.ignore()
 
-# === 19. MAIN ===
+
+# ══════════════════════════════════════════════════════════════
+# ENTRY POINT
+# ══════════════════════════════════════════════════════════════
 
 
 def main():
-    if hasattr(Qt, "AA_EnableHighDpiScaling"):
-        QApplication.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling, True)
-    if hasattr(Qt, "AA_UseHighDpiPixmaps"):
-        QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("MIRA")
-    app.setApplicationVersion("13.0")
+    app.setApplicationVersion("2.0")
     app.setStyle("Fusion")
     app.setFont(QFont("Segoe UI", 10))
+
     palette = app.palette()
-    palette.setColor(palette.ColorRole.Window, QColor(Theme.BG))
-    palette.setColor(palette.ColorRole.WindowText, QColor(Theme.TEXT))
-    palette.setColor(palette.ColorRole.Base, QColor(Theme.CARD))
-    palette.setColor(palette.ColorRole.Text, QColor(Theme.TEXT))
-    palette.setColor(palette.ColorRole.Button, QColor(Theme.CARD_HOVER))
-    palette.setColor(palette.ColorRole.ButtonText, QColor(Theme.TEXT))
-    palette.setColor(palette.ColorRole.Highlight, QColor(Theme.ACCENT))
+    palette.setColor(palette.ColorRole.Window, QColor(T.BG))
+    palette.setColor(palette.ColorRole.WindowText, QColor(T.TX))
+    palette.setColor(palette.ColorRole.Base, QColor(T.CD))
+    palette.setColor(palette.ColorRole.Text, QColor(T.TX))
+    palette.setColor(palette.ColorRole.Button, QColor(T.CH))
+    palette.setColor(palette.ColorRole.ButtonText, QColor(T.TX))
+    palette.setColor(palette.ColorRole.Highlight, QColor(T.A))
     palette.setColor(palette.ColorRole.HighlightedText, QColor("white"))
     app.setPalette(palette)
+
+    app.setStyleSheet(f"""
+        QLineEdit, QPlainTextEdit, QTextEdit {{
+            background-color: {T.IN};
+            border: 2px solid {T.BD};
+            border-radius: 10px;
+            padding: 12px 16px;
+            color: {T.TX};
+            font-size: 14px;
+            selection-background-color: {T.A};
+        }}
+        QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus {{
+            border: 2px solid {T.BF};
+            background-color: {T.SF};
+        }}
+        QComboBox {{
+            background-color: {T.IN};
+            border: 2px solid {T.BD};
+            border-radius: 10px;
+            padding: 12px 16px;
+            color: {T.TX};
+            font-size: 14px;
+            min-height: 20px;
+        }}
+        QComboBox:focus {{
+            border: 2px solid {T.BF};
+        }}
+        QComboBox:hover {{
+            border: 2px solid {T.TM};
+        }}
+        QComboBox::drop-down {{
+            border: none;
+            width: 30px;
+        }}
+        QComboBox::down-arrow {{
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-top: 6px solid {T.TD};
+            margin-right: 10px;
+        }}
+        QComboBox QAbstractItemView {{
+            background-color: {T.SF};
+            color: {T.TX};
+            border: 2px solid {T.BD};
+            selection-background-color: {T.A};
+            selection-color: white;
+            border-radius: 8px;
+            padding: 4px;
+        }}
+        QProgressBar {{
+            background-color: {T.CD};
+            border: none;
+            border-radius: 4px;
+            height: 8px;
+        }}
+        QProgressBar::chunk {{
+            background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {T.A},stop:1 {T.AH});
+            border-radius: 4px;
+        }}
+        QToolTip {{
+            background-color: {T.SF};
+            color: {T.TX};
+            border: 1px solid {T.BD};
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 12px;
+        }}
+    """)
+
     win = MIRAWindow()
     win.resize(1400, 900)
     win.showMaximized()
