@@ -268,7 +268,7 @@ A: Нажмите **✕** — MIRA свернётся в трей. Двойно�
 
 ### Контакты
 
-[Telegram](https://t.me/CayPlay78) · [VK](https://m.vk.com/cayplay) · [GitHub](https://github.com)
+[Telegram](https://t.me/CayPlayMedia) · [VK](https://m.vk.com/cayplay) · [GitHub](https://github.com)
 
 ---
 
